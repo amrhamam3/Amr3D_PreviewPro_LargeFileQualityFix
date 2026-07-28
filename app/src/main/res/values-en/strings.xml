@@ -132,6 +132,12 @@ Amr Hamam 3D © 2026</string>
     <string name="inspection_width_label">Length (X):   %1$s %2$s</string>
     <string name="inspection_depth_label">Width (Y):    %1$s %2$s</string>
     <string name="inspection_height_label">Height (Z):   %1$s %2$s</string>
+    <string name="inspection_checking_printability">⏳ Checking printability…</string>
+    <string name="inspection_printable_ok">✅ Model is sound and ready to print/cut</string>
+    <string name="inspection_open_edges">⚠️ Open edges: %1$d</string>
+    <string name="inspection_flipped_normals">⚠️ Flipped-normal triangles: %1$d</string>
+    <string name="inspection_non_manifold">⚠️ Non-manifold edges: %1$d</string>
+    <string name="inspection_approximate_note">(Approximate check — model is very large)</string>
 
     <string name="toast_entity_count">✅  %1$d entities</string>
 

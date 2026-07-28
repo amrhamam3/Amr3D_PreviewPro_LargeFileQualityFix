@@ -1640,11 +1640,45 @@ class ViewerFragment : Fragment() {
         if (inspectionCard.visibility == View.VISIBLE) { inspectionCard.visibility = View.GONE; return }
         val report = MeasurementTools.inspect(model, currentUnit)
         val u = getString(report.unit.labelRes)
-        inspectionText.text = getString(R.string.inspection_report_header) + "\n" +
+        val dimensionsText = getString(R.string.inspection_report_header) + "\n" +
             getString(R.string.inspection_width_label, "%.2f".format(report.width), u) + "\n" +
             getString(R.string.inspection_depth_label, "%.2f".format(report.depth), u) + "\n" +
             getString(R.string.inspection_height_label, "%.2f".format(report.height), u)
+
+        // الأبعاد بتظهر فورًا (رخيصة الحساب)، وفحص قابلية الطباعة (حواف مفتوحة +
+        // Normals معكوسة) بيتضاف تحتها لما يخلص — الفحص ده أبطأ نسبيًا (Union-Find
+        // على كل أضلاع الموديل) فبيشتغل على Dispatchers.Default مش على الـ UI thread.
+        inspectionText.text = dimensionsText + "\n" + getString(R.string.inspection_checking_printability)
         inspectionCard.visibility  = View.VISIBLE
         measurementCard.visibility = View.GONE
+
+        val requestedModel = model
+        viewLifecycleOwner.lifecycleScope.launch {
+            val integrity = withContext(Dispatchers.Default) { MeshIntegrityChecker.check(requestedModel) }
+            // لو المستخدم فتح ملف تاني أو قفل الكارت وهو الفحص شغال، مانحدثش نص قديم
+            if (currentModel !== requestedModel || inspectionCard.visibility != View.VISIBLE) return@launch
+
+            val printabilityText = buildString {
+                append("\n")
+                if (integrity.isPrintable) {
+                    append(getString(R.string.inspection_printable_ok))
+                } else {
+                    if (integrity.openEdgeCount > 0) {
+                        append(getString(R.string.inspection_open_edges, integrity.openEdgeCount)).append("\n")
+                    }
+                    if (integrity.flippedTriangleCount > 0) {
+                        append(getString(R.string.inspection_flipped_normals, integrity.flippedTriangleCount)).append("\n")
+                    }
+                    if (integrity.nonManifoldEdgeCount > 0) {
+                        append(getString(R.string.inspection_non_manifold, integrity.nonManifoldEdgeCount)).append("\n")
+                    }
+                }
+                if (integrity.isApproximate) {
+                    append(getString(R.string.inspection_approximate_note))
+                }
+            }.trimEnd('\n')
+
+            inspectionText.text = dimensionsText + "\n" + printabilityText
+        }
     }
 }
