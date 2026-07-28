@@ -39,7 +39,6 @@
     <string name="settings_show_reflection_desc">Si se desactiva, se mostrará una cuadrícula</string>
     <string name="settings_face_count">Contador de caras y vértices</string>
     <string name="settings_face_count_desc">Texto pequeño en la parte superior que muestra el número de caras y vértices</string>
-    <string name="settings_change_name">👤  Cambiar nombre</string>
     <string name="settings_change_name_hint">Tu nuevo nombre</string>
     <string name="settings_default_name">amigo</string>
     <string name="action_save">Guardar</string>
