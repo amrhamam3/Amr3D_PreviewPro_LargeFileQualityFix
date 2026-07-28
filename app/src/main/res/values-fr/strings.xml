@@ -39,7 +39,6 @@
     <string name="settings_show_reflection_desc">Si désactivé, une grille s'affichera à la place</string>
     <string name="settings_face_count">Compteur de faces et sommets</string>
     <string name="settings_face_count_desc">Petit texte en haut de l'écran indiquant le nombre de faces et sommets</string>
-    <string name="settings_change_name">👤  Changer le nom</string>
     <string name="settings_change_name_hint">Votre nouveau nom</string>
     <string name="settings_default_name">ami</string>
     <string name="action_save">Enregistrer</string>
