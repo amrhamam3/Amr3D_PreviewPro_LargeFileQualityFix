@@ -39,7 +39,6 @@
     <string name="settings_show_reflection_desc">If off, a grid will show instead</string>
     <string name="settings_face_count">Face/vertex counter</string>
     <string name="settings_face_count_desc">Small text at the top of the viewer showing Faces/Vertices count</string>
-    <string name="settings_change_name">👤  Change Name</string>
     <string name="settings_change_name_hint">Your new name</string>
     <string name="settings_default_name">friend</string>
     <string name="action_save">Save</string>
