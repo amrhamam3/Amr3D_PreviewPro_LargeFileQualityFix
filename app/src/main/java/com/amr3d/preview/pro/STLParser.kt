@@ -50,10 +50,16 @@ object STLParser {
      * أقل من كده على الأجهزة الضعيفة في الرام. */
     private fun safeTriangleCap(): Int {
         val maxHeapBytes = Runtime.getRuntime().maxMemory()
-        val budgetBytes = (maxHeapBytes * 0.18).toLong()
+        // ⚠️ رُفعت من 18% إلى 30% (بلاغ Amr: ملفات ~70 ميجا كانت بتطلع "مشوّهة/
+        // مفتّتة" رغم إن نافذة تنبيه الملفات الكبيرة متظبطة على 100 ميجا — السبب
+        // الحقيقي إن الحد ده (safeTriangleCap) مستقل تمامًا عن نافذة التنبيه دي،
+        // وكان بيتفعّل بصمت جوه القراءة الخام نفسها حتى لو المستخدم مشافش أي رسالة
+        // تحذير. رفع النسبة + سقف أعلى بيقلل احتمالية تفعيله أصلاً لملفات الحجم
+        // ده على أغلب الأجهزة (largeHeap مفعّل بالفعل في المانيفست).
+        val budgetBytes = (maxHeapBytes * 0.30).toLong()
         val bytesPerTriangle = 72L // 9 floats vertices + 9 floats normals × 4 بايت لكل float
         val cap = (budgetBytes / bytesPerTriangle)
-        return cap.coerceIn(250_000L, 4_000_000L).toInt()
+        return cap.coerceIn(250_000L, 8_000_000L).toInt()
     }
 
     /**
@@ -162,19 +168,36 @@ object STLParser {
             throw STLParseException(context.getString(R.string.error_stl_no_valid_triangles))
         }
 
-        // ── حد الأمان: لو عدد المثلثات هيتجاوز الحد الأقصى المسموح نخزنه في الذاكرة
-        // دفعة واحدة (محسوب حسب رام الجهاز نفسه)، بناخد عينة بانتظام (Stride) بدل
-        // ما نخزن كل مثلث — كده حجم المصفوفات المحجوزة يفضل محدود دايمًا ──
         val maxTriangles = safeTriangleCap()
-        val stride = if (triangleCount > maxTriangles)
-            Math.ceil(triangleCount.toDouble() / maxTriangles).toInt()
-        else 1
-        val keptCapacity = (triangleCount + stride - 1) / stride
 
-        // Pre-allocate based on the (possibly-reduced) kept triangle count فقط، مش
-        // العدد الخام الكامل — ده اللي فعليًا بيمنع الـ OutOfMemoryError
-        val vertices = FloatArray(keptCapacity * 3 * 3)
-        val normals = FloatArray(keptCapacity * 3 * 3)
+        // ⚠️⚠️ إصلاح جوهري (بلاغ Amr — ملفات ~70 ميجا بتفتح "مشوّهة جدًا"،
+        // شكل مفتّت لشظايا مثلثات متناثرة مفصولة عن بعضها): الطريقة القديمة هنا
+        // كانت بتاخد "عينة بانتظام" باختيار مثلث كل stride مثلث حسب ترتيبه في
+        // الملف نفسه (t % stride == 0). المشكلة إن ملفات STL (خصوصًا من سكانر/
+        // ماسح ضوئي) بتتخزّن غالبًا بترتيب متقارب مكانيًا (المثلثات المتجاورة في
+        // الفراغ غالبًا متجاورة في الملف كمان) — يعني لما نحتفظ بمثلث ونرمي
+        // اللي بعده واللي بعده (جيرانه الفعليين في المساحة)، المثلث المحتفظ بيه
+        // بيبقى "جزيرة" معزولة تمامًا (كل أضلاعه الثلاثة من غير أي مثلث مجاور
+        // باقي)، وده بالظبط بيدي شكل "الكونفيتي المتناثر" اللي ظهر في اللقطة.
+        // هنا ده بالظبط نفس فشل الخوارزمية القديمة اللي MeshDecimator اتعمل
+        // أصلاً عشان يتجنبه — بس بيحصل تاني في مرحلة القراءة الخام قبل ما
+        // MeshDecimator ياخد فرصته، ومستقل تمامًا عن نافذة تنبيه الملفات الكبيرة
+        // في الواجهة (اللي بتتفعّل بس فوق 100 ميجا).
+        //
+        // الحل: توزيع "الاختيار" على مساحة الموديل نفسها (Spatial Grid Sampling)
+        // بدل ترتيب الملف — بنقرأ الملف مرة تحضيرية سريعة أول حاجة عشان نعرف
+        // الحدود الخارجية الحقيقية (Bounds)، وبعدين في القراءة الفعلية بنحتفظ
+        // بأول مثلث بس يقع في كل خلية من شبكة مكانية خشنة (حجمها محسوب عشان
+        // يدّينا تقريبًا العدد المطلوب). النتيجة: المثلثات الباقية موزعة على كل
+        // سطح الموديل بانتظام (زي نسخة أقل دقة من نفس الشكل) بدل ما تبقى شظايا
+        // معزولة — بالظبط نفس فلسفة findSafeWeldEpsilon في EdgeCollapseDecimator.
+        if (triangleCount > maxTriangles) {
+            return parseBinaryWithSpatialSampling(context, resolver, uri, triangleCount, maxTriangles, onProgress)
+        }
+
+        // ── المسار العادي: الملف يدخل في حدود الذاكرة الآمنة، نخزّن كل مثلث زي ما هو ──
+        val vertices = FloatArray(triangleCount * 3 * 3)
+        val normals = FloatArray(triangleCount * 3 * 3)
 
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
@@ -184,9 +207,7 @@ object STLParser {
         var maxZ = -Float.MAX_VALUE
 
         var vIdx = 0
-        var keptTriangles = 0
         val triangleBytes = ByteArray(50) // 50 bytes per triangle
-        // بنبعت تحديث تقدم كل 1% (أو كل 500 مثلث كحد أدنى) عشان منغرقش الـ UI thread بتحديثات كتير
         val progressStep = maxOf(triangleCount / 100, 500)
         var lastReportedPercent = -1
 
@@ -204,30 +225,21 @@ object STLParser {
                 val ny = buffer.float
                 val nz = buffer.float
 
-                // بنخزّن هذا المثلث بس لو جاله دوره في العينة (وقعنا لسه في حدود
-                // المساحة المحجوزة)، لكن بنحسب حدوده (Bounds) دايمًا حتى لو مش
-                // هيتخزن — عشان الأبعاد الخارجية الحقيقية للقطعة تفضل دقيقة 100%
-                val keepThis = (t % stride == 0) && keptTriangles < keptCapacity
-
-                // 3 vertices per triangle
                 for (v in 0 until 3) {
                     val x = buffer.float
                     val y = buffer.float
                     val z = buffer.float
 
-                    if (keepThis) {
-                        vertices[vIdx] = x
-                        vertices[vIdx + 1] = y
-                        vertices[vIdx + 2] = z
+                    vertices[vIdx] = x
+                    vertices[vIdx + 1] = y
+                    vertices[vIdx + 2] = z
 
-                        normals[vIdx] = nx
-                        normals[vIdx + 1] = ny
-                        normals[vIdx + 2] = nz
+                    normals[vIdx] = nx
+                    normals[vIdx + 1] = ny
+                    normals[vIdx + 2] = nz
 
-                        vIdx += 3
-                    }
+                    vIdx += 3
 
-                    // Update bounds — من كل مثلث في الملف، مش بس المخزّن
                     if (x < minX) minX = x
                     if (y < minY) minY = y
                     if (z < minZ) minZ = z
@@ -236,13 +248,133 @@ object STLParser {
                     if (z > maxZ) maxZ = z
                 }
 
-                if (keepThis) keptTriangles++
-
                 // Skip attribute byte count (2 bytes)
                 buffer.short
 
                 if (t % progressStep == 0 || t == triangleCount - 1) {
-                    val percent = (((t + 1).toLong() * 90L) / triangleCount).toInt() // نحجز 0-90% للقراءة، والباقي للتجهيز
+                    val percent = (((t + 1).toLong() * 90L) / triangleCount).toInt()
+                    if (percent != lastReportedPercent) {
+                        lastReportedPercent = percent
+                        onProgress(percent)
+                    }
+                }
+            }
+        } ?: throw STLParseException(context.getString(R.string.error_stl_read_failed))
+
+        return STLModel(
+            vertices = vertices,
+            normals = normals,
+            triangleCount = triangleCount,
+            minBounds = floatArrayOf(minX, minY, minZ),
+            maxBounds = floatArrayOf(maxX, maxY, maxZ),
+            isWatertightHint = (triangleCount % 2 == 0)
+        )
+    }
+
+    /**
+     * مسار الملفات اللي تجاوزت الحد الآمن للذاكرة — قراءتين بدل واحدة:
+     * (1) قراءة تحضيرية سريعة (تحسب الحدود الخارجية بس، من غير أي تخزين) —
+     * التكلفة الإضافية مقبولة لأنها بتحصل بس في الحالة النادرة دي (ملف أكبر من
+     * الحد الآمن)، وبتاخد 0-40% من شريط التقدم.
+     * (2) القراءة الفعلية (40-90%) وفيها بنحتفظ بأول مثلث يقع في كل خلية من
+     * شبكة مكانية خشنة محسوبة من حجم الموديل الحقيقي (Spatial Grid Sampling) —
+     * بدل الـ Stride القديم اللي كان بيفتّت الموديل (شوف الشرح فوق).
+     */
+    private fun parseBinaryWithSpatialSampling(
+        context: Context, resolver: android.content.ContentResolver, uri: Uri,
+        triangleCount: Int, maxTriangles: Int, onProgress: (Int) -> Unit
+    ): STLModel {
+        val triangleBytes = ByteArray(50)
+
+        // ── القراءة الأولى: الحدود الخارجية بس ──
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        var maxZ = -Float.MAX_VALUE
+
+        val boundsProgressStep = maxOf(triangleCount / 100, 500)
+        var lastReportedPercent = -1
+        resolver.openInputStream(uri)?.use { stream ->
+            stream.skip(84)
+            for (t in 0 until triangleCount) {
+                if (stream.read(triangleBytes) != 50) {
+                    throw STLParseException(context.getString(R.string.error_stl_corrupt_triangle, t))
+                }
+                val buffer = ByteBuffer.wrap(triangleBytes).order(ByteOrder.LITTLE_ENDIAN)
+                buffer.float; buffer.float; buffer.float // skip normal
+                for (v in 0 until 3) {
+                    val x = buffer.float; val y = buffer.float; val z = buffer.float
+                    if (x < minX) minX = x
+                    if (y < minY) minY = y
+                    if (z < minZ) minZ = z
+                    if (x > maxX) maxX = x
+                    if (y > maxY) maxY = y
+                    if (z > maxZ) maxZ = z
+                }
+                if (t % boundsProgressStep == 0 || t == triangleCount - 1) {
+                    val percent = (((t + 1).toLong() * 40L) / triangleCount).toInt() // 0-40%
+                    if (percent != lastReportedPercent) {
+                        lastReportedPercent = percent
+                        onProgress(percent)
+                    }
+                }
+            }
+        } ?: throw STLParseException(context.getString(R.string.error_stl_read_failed))
+
+        // حجم خلية الشبكة: بنستهدف عدد خلايا يدّي تقريبًا maxTriangles خلية على
+        // مساحة سطح الموديل (sqrt مش cbrt لنفس سبب findSafeWeldEpsilon — السطح
+        // غشاء ثنائي الأبعاد مش حجم مصمت)
+        val dx = (maxX - minX).toDouble(); val dy = (maxY - minY).toDouble(); val dz = (maxZ - minZ).toDouble()
+        val avgAxisSize = ((dx + dy + dz) / 3.0).coerceAtLeast(1e-6)
+        val cellsPerAxis = maxOf(4, Math.ceil(Math.sqrt(maxTriangles.toDouble())).toInt())
+        val cellSize = (avgAxisSize / cellsPerAxis).coerceAtLeast(1e-7)
+        val gridDim = 1 shl 20
+        fun cellIndex(v: Float, minV: Float): Long {
+            return ((v - minV).toDouble() / cellSize).toLong().coerceIn(0, (gridDim - 1).toLong())
+        }
+
+        val keptCapacity = maxTriangles
+        val vertices = FloatArray(keptCapacity * 3 * 3)
+        val normals = FloatArray(keptCapacity * 3 * 3)
+        var vIdx = 0
+        var keptTriangles = 0
+        val occupiedCells = HashSet<Long>(keptCapacity)
+
+        resolver.openInputStream(uri)?.use { stream ->
+            stream.skip(84)
+            for (t in 0 until triangleCount) {
+                if (stream.read(triangleBytes) != 50) {
+                    throw STLParseException(context.getString(R.string.error_stl_corrupt_triangle, t))
+                }
+                val buffer = ByteBuffer.wrap(triangleBytes).order(ByteOrder.LITTLE_ENDIAN)
+                val nx = buffer.float; val ny = buffer.float; val nz = buffer.float
+
+                val x0 = buffer.float; val y0 = buffer.float; val z0 = buffer.float
+                val x1 = buffer.float; val y1 = buffer.float; val z1 = buffer.float
+                val x2 = buffer.float; val y2 = buffer.float; val z2 = buffer.float
+                buffer.short // attribute byte count
+
+                // مركز المثلث (centroid) هو مفتاح الخلية — كده كل مثلث بيتحدد
+                // مكانه الحقيقي في الفراغ، مش ترتيبه في الملف
+                val ccx = (x0 + x1 + x2) / 3f; val ccy = (y0 + y1 + y2) / 3f; val ccz = (z0 + z1 + z2) / 3f
+                val key = (cellIndex(ccx, minX) shl 42) or (cellIndex(ccy, minY) shl 21) or cellIndex(ccz, minZ)
+
+                val keepThis = keptTriangles < keptCapacity && occupiedCells.add(key)
+                if (keepThis) {
+                    vertices[vIdx] = x0; vertices[vIdx + 1] = y0; vertices[vIdx + 2] = z0
+                    vertices[vIdx + 3] = x1; vertices[vIdx + 4] = y1; vertices[vIdx + 5] = z1
+                    vertices[vIdx + 6] = x2; vertices[vIdx + 7] = y2; vertices[vIdx + 8] = z2
+                    normals[vIdx] = nx; normals[vIdx + 1] = ny; normals[vIdx + 2] = nz
+                    normals[vIdx + 3] = nx; normals[vIdx + 4] = ny; normals[vIdx + 5] = nz
+                    normals[vIdx + 6] = nx; normals[vIdx + 7] = ny; normals[vIdx + 8] = nz
+                    vIdx += 9
+                    keptTriangles++
+                }
+
+                if (t % boundsProgressStep == 0 || t == triangleCount - 1) {
+                    val percent = 40 + (((t + 1).toLong() * 50L) / triangleCount).toInt() // 40-90%
                     if (percent != lastReportedPercent) {
                         lastReportedPercent = percent
                         onProgress(percent)
