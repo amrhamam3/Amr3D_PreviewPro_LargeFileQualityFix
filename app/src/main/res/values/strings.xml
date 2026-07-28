@@ -39,7 +39,6 @@
     <string name="settings_show_reflection_desc">لو اتقفل، هتظهر شبكة (Grid) بدله</string>
     <string name="settings_face_count">عداد المثلثات والرؤوس</string>
     <string name="settings_face_count_desc">نص صغير أعلى شاشة العرض يوضح عدد Faces وVertices</string>
-    <string name="settings_change_name">👤  تغيير الاسم</string>
     <string name="settings_change_name_hint">اسمك الجديد</string>
     <string name="settings_default_name">صديقي</string>
     <string name="action_save">حفظ</string>
