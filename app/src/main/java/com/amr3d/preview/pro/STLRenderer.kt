@@ -189,8 +189,8 @@ class STLRenderer : GLSurfaceView.Renderer {
     private val normalMatrix = FloatArray(16)
     private val tempMatrix = FloatArray(16)
 
-    @Volatile var rotationX = 3.2f
-    @Volatile var rotationY = 34f
+    @Volatile var rotationX = 25f
+    @Volatile var rotationY = 35f
     @Volatile var scaleFactor = 1f
     @Volatile var panX = 0f
     @Volatile var panY = 0f
@@ -400,7 +400,7 @@ class STLRenderer : GLSurfaceView.Renderer {
         // ⚠️ إصلاح: كانت +50 (تُظهر أمام+يسار)، لكن الزاوية المطلوبة فعليًا (حسب
         // صورة مرجعية بعتها Amr موضّح عليها back/right/left/front) هي أمام+يمين —
         // نفس مقدار الميل، بس الاتجاه المعاكس (-50).
-        rotationX = -3.2f; rotationY = -34f; scaleFactor = 1f; panX = 0f; panY = 0f
+        rotationX = 25f; rotationY = -35f; scaleFactor = 1f; panX = 0f; panY = 0f
         pivotOverride = null
         measurementPoints.clear()
         introActive = true
