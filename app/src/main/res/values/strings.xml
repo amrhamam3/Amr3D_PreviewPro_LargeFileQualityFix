@@ -136,12 +136,6 @@ Amr Hamam 3D © 2026</string>
     <string name="inspection_width_label">الطول (X):    %1$s %2$s</string>
     <string name="inspection_depth_label">العرض (Y):   %1$s %2$s</string>
     <string name="inspection_height_label">الارتفاع (Z): %1$s %2$s</string>
-    <string name="inspection_checking_printability">⏳ جاري فحص قابلية الطباعة…</string>
-    <string name="inspection_printable_ok">✅ الموديل سليم وقابل للطباعة/القطع</string>
-    <string name="inspection_open_edges">⚠️ حواف مفتوحة: %1$d</string>
-    <string name="inspection_flipped_normals">⚠️ مثلثات باتجاه معكوس: %1$d</string>
-    <string name="inspection_non_manifold">⚠️ حواف غير منتظمة: %1$d</string>
-    <string name="inspection_approximate_note">(الفحص تقريبي — الموديل كبير جدًا)</string>
     <string name="inspection_highlight_open_edges">🔴 إظهار الأماكن المفتوحة على الموديل</string>
 
     <string name="toast_entity_count">✅  %1$d عنصر</string>

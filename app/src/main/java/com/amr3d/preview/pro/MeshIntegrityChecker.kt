@@ -30,11 +30,10 @@ import kotlin.math.sqrt
  *    بيتحسب "معكوس". نفس المبدأ المستخدم في أدوات إصلاح الموديلات الاحترافية
  *    (Unify Normals) لكن بتنفيذ خفيف يناسب الموبايل.
  *
- * ⚠️ للموديلات الضخمة جدًا (فوق [LARGE_MESH_TRIANGLE_THRESHOLD])، الفحص بيشتغل
- * على نسخة مبسّطة (Decimated، عن طريق EdgeCollapseDecimator الموجود بالفعل)
- * مش الموديل الأصلي كامل — عشان الـ HashMap المستخدمة في تتبع الأضلاع تقيلة
- * على الذاكرة نسبيًا (نفس فلسفة الحماية في EdgeCollapseDecimator وSTLParser).
- * النتيجة في الحالة دي بس تقريبية/إرشادية (isApproximate = true).
+ * ⚠️ شاشة الفحص مفيهاش أي معالجة/تبسيط للموديل خالص (ده حصريًا في شاشة
+ * السلايزر) — فالموديلات فوق [LARGE_MESH_TRIANGLE_THRESHOLD] بيتم تجاوز
+ * فحصها تمامًا (مش بنبسّطها عشان نقدر نفحصها)، والشيك بوكس بيختفي من
+ * الواجهة تلقائيًا في الحالة دي.
  */
 object MeshIntegrityChecker {
 
@@ -60,30 +59,25 @@ object MeshIntegrityChecker {
      * غرضها توحيد نسخ الرأس المكرر بس، مش عمل تبسيط حقيقي في الخطوة دي. */
     private const val WELD_RELATIVE_EPS = 1e-5
 
-    /** فوق الحد ده، الفحص بيشتغل على نسخة مبسّطة بدل الموديل الأصلي — حماية
-     * ذاكرة (شوف الشرح فوق). نفس القيمة المستخدمة في EdgeCollapseDecimator. */
+    /** فوق الحد ده، الفحص من شاشة الفحص بيتجاوز خالص (بدون أي تبسيط/معالجة) —
+     * شوف الشرح فوق. */
     private const val LARGE_MESH_TRIANGLE_THRESHOLD = 600_000
 
     /** ⚠️ دالة بطيئة نسبيًا (O(n) مع overhead HashMap) — ماتِتنادَاش من الـ Main/UI
      * Thread ولا من الـ GL Thread، استخدمها من Coroutine على Dispatchers.Default. */
     fun check(model: STLModel): IntegrityReport {
         val original = model.triangleCount
-        if (original == 0) {
-            return IntegrityReport(0, 0, 0, 0, isApproximate = false, openEdgeVertices = FloatArray(0))
+        if (original == 0 || original > LARGE_MESH_TRIANGLE_THRESHOLD) {
+            // فاضي، أو أكبر من الحد الآمن للفحص المباشر — من غير أي معالجة/تبسيط
+            // إضافية هنا (المعالجة الحقيقية مكانها شاشة السلايزر بس). تقرير فاضي،
+            // والشيك بوكس بيختفي تلقائيًا في الواجهة.
+            return IntegrityReport(0, 0, 0, original, isApproximate = true, openEdgeVertices = FloatArray(0))
         }
 
-        val isApprox = original > LARGE_MESH_TRIANGLE_THRESHOLD
-        val target = if (isApprox) {
-            val keepRatio = LARGE_MESH_TRIANGLE_THRESHOLD.toFloat() / original.toFloat()
-            EdgeCollapseDecimator.run(model, keepRatio) ?: model
-        } else {
-            model
-        }
-
-        return checkInternal(target, isApprox)
+        return checkInternal(model)
     }
 
-    private fun checkInternal(model: STLModel, isApproximate: Boolean): IntegrityReport {
+    private fun checkInternal(model: STLModel): IntegrityReport {
         val triangleCount = model.triangleCount
         val verts = model.vertices
 
@@ -263,7 +257,7 @@ object MeshIntegrityChecker {
             flippedTriangleCount = flippedTriangleCount,
             nonManifoldEdgeCount = nonManifoldKeys.size,
             checkedTriangleCount = triangleCount,
-            isApproximate = isApproximate,
+            isApproximate = false,
             openEdgeVertices = if (highlightCount * 6 == highlightVerts.size) highlightVerts else highlightVerts.copyOf(highlightCount * 6)
         )
     }

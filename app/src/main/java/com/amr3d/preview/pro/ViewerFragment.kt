@@ -1307,13 +1307,33 @@ class ViewerFragment : Fragment() {
         }.start()
     }
 
+    /** إعادة الكاميرا للوضع الافتراضي — بحركة ناعمة "سلو موشن" مع لمسة ارتداد
+     * بسيطة في النهاية (Overshoot) بدل القفزة المفاجئة، عشان تحس إنها "دلوعة"
+     * شوية مش جافة. بترجع لنفس زاوية الدخول بالظبط لكن بالزووم الطبيعي (1،
+     * مش 0.85 بتاعة الدخول) — فرق مقصود، شوف الشرح في STLRenderer.uploadModelToGPU. */
     private fun resetCamera() {
         val r = glViewerView.stlRenderer
         if (r.autoRotate) { r.autoRotate = false; btnAutoRotate.isChecked = false }
-        r.rotationX = 25f; r.rotationY = 35f
-        r.scaleFactor = 1f; r.panX = 0f; r.panY = 0f
+
+        val startRotX = r.rotationX; val startRotY = r.rotationY
+        val startScale = r.scaleFactor; val startPanX = r.panX; val startPanY = r.panY
+        val targetRotX = 25f; val targetRotY = 35f
+        val targetScale = 1f; val targetPanX = 0f; val targetPanY = 0f
+
         r.pivotOverride = null
-        glViewerView.queueEvent { r.updateProjection() }
+        android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 650
+            interpolator = android.view.animation.OvershootInterpolator(1.1f)
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                r.rotationX  = startRotX  + (targetRotX  - startRotX)  * t
+                r.rotationY  = startRotY  + (targetRotY  - startRotY)  * t
+                r.scaleFactor = (startScale + (targetScale - startScale) * t).coerceAtLeast(0.05f)
+                r.panX = startPanX + (targetPanX - startPanX) * t
+                r.panY = startPanY + (targetPanY - startPanY) * t
+                glViewerView.queueEvent { r.updateProjection() }
+            }
+        }.start()
     }
 
     // ══ قائمة الخامات — كرات زجاجية ══
@@ -1652,56 +1672,32 @@ class ViewerFragment : Fragment() {
         if (inspectionCard.visibility == View.VISIBLE) { inspectionCard.visibility = View.GONE; return }
         val report = MeasurementTools.inspect(model, currentUnit)
         val u = getString(report.unit.labelRes)
-        val dimensionsText = getString(R.string.inspection_report_header) + "\n" +
+        inspectionText.text = getString(R.string.inspection_report_header) + "\n" +
             getString(R.string.inspection_width_label, "%.2f".format(report.width), u) + "\n" +
             getString(R.string.inspection_depth_label, "%.2f".format(report.depth), u) + "\n" +
             getString(R.string.inspection_height_label, "%.2f".format(report.height), u)
-
-        // الأبعاد بتظهر فورًا (رخيصة الحساب)، وفحص قابلية الطباعة (حواف مفتوحة +
-        // Normals معكوسة) بيتضاف تحتها لما يخلص — الفحص ده أبطأ نسبيًا (Union-Find
-        // على كل أضلاع الموديل) فبيشتغل على Dispatchers.Default مش على الـ UI thread.
-        inspectionText.text = dimensionsText + "\n" + getString(R.string.inspection_checking_printability)
         inspectionCard.visibility  = View.VISIBLE
         measurementCard.visibility = View.GONE
+        cbHighlightOpenEdges.visibility = View.GONE // بيبان بس لو الفحص الصامت تحت لقى حواف مفتوحة فعلاً
 
+        // شاشة الفحص مفيهاش أي نص "جاري الفحص/المعالجة" — دورها بس عرض الأبعاد
+        // فورًا (زي ما هو فوق). الفحص عن الحواف المفتوحة بيشتغل بصمت في الخلفية
+        // (Dispatchers.Default) وهدفه الوحيد إظهار/إخفاء تشيك بوكس الهايلايت —
+        // مفيش أي معالجة أو تبسيط للموديل هنا (ده حصريًا شاشة السلايزر).
         val requestedModel = model
         viewLifecycleOwner.lifecycleScope.launch {
             val integrity = withContext(Dispatchers.Default) { MeshIntegrityChecker.check(requestedModel) }
-            // لو المستخدم فتح ملف تاني أو قفل الكارت وهو الفحص شغال، مانحدثش نص قديم
+            // لو المستخدم فتح ملف تاني أو قفل الكارت وهو الفحص شغال، متأثرش على حاجة
             if (currentModel !== requestedModel || inspectionCard.visibility != View.VISIBLE) return@launch
 
-            val printabilityText = buildString {
-                append("\n")
-                if (integrity.isPrintable) {
-                    append(getString(R.string.inspection_printable_ok))
-                } else {
-                    if (integrity.openEdgeCount > 0) {
-                        append(getString(R.string.inspection_open_edges, integrity.openEdgeCount)).append("\n")
-                    }
-                    if (integrity.flippedTriangleCount > 0) {
-                        append(getString(R.string.inspection_flipped_normals, integrity.flippedTriangleCount)).append("\n")
-                    }
-                    if (integrity.nonManifoldEdgeCount > 0) {
-                        append(getString(R.string.inspection_non_manifold, integrity.nonManifoldEdgeCount)).append("\n")
-                    }
-                }
-                if (integrity.isApproximate) {
-                    append(getString(R.string.inspection_approximate_note))
-                }
-            }.trimEnd('\n')
-
-            inspectionText.text = dimensionsText + "\n" + printabilityText
-
-            // تشيك بوكس الهايلايت بيظهر بس لو فعلاً في حواف مفتوحة تستاهل تتلوّن —
-            // العدد نفسه مش مهم (حسب توضيح Amr)، بس وجودها من عدمه هو المهم
             val hasOpenEdges = integrity.openEdgeVertices.isNotEmpty()
             cbHighlightOpenEdges.visibility = if (hasOpenEdges) View.VISIBLE else View.GONE
-            if (!hasOpenEdges) {
+            if (hasOpenEdges) {
+                glViewerView.stlRenderer.openEdgeHighlightVertices = integrity.openEdgeVertices
+            } else {
                 cbHighlightOpenEdges.isChecked = false
                 glViewerView.stlRenderer.showOpenEdgesHighlight = false
                 glViewerView.stlRenderer.openEdgeHighlightVertices = null
-            } else {
-                glViewerView.stlRenderer.openEdgeHighlightVertices = integrity.openEdgeVertices
             }
             glViewerView.requestRender()
         }

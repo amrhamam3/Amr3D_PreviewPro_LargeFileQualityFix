@@ -132,12 +132,6 @@ Amr Hamam 3D © 2026</string>
     <string name="inspection_width_label">Longueur (X) : %1$s %2$s</string>
     <string name="inspection_depth_label">Largeur (Y) :  %1$s %2$s</string>
     <string name="inspection_height_label">Hauteur (Z) :  %1$s %2$s</string>
-    <string name="inspection_checking_printability">⏳ Vérification de l\'imprimabilité…</string>
-    <string name="inspection_printable_ok">✅ Modèle sain, prêt à imprimer/découper</string>
-    <string name="inspection_open_edges">⚠️ Bords ouverts : %1$d</string>
-    <string name="inspection_flipped_normals">⚠️ Triangles à normale inversée : %1$d</string>
-    <string name="inspection_non_manifold">⚠️ Bords non conformes : %1$d</string>
-    <string name="inspection_approximate_note">(Vérification approximative — modèle très volumineux)</string>
     <string name="inspection_highlight_open_edges">🔴 Mettre en évidence les zones ouvertes</string>
 
     <string name="toast_entity_count">✅  %1$d éléments</string>

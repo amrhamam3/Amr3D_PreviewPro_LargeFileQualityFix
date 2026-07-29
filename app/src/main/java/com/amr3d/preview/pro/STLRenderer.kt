@@ -397,10 +397,11 @@ class STLRenderer : GLSurfaceView.Renderer {
         // زاوية افتراضية توازنية (Three-quarter view) تفضّل تُظهر السطح العلوي +
         // الوجه الأمامي + جزء من الجانب مع بعض، بدل زاوية شبه جانبية كانت بتطلع
         // "مفرودة" أفقيًا لموديلات طويلة/رفيعة (زي شكل قناة أو نصل).
-        // ⚠️ إصلاح: كانت +50 (تُظهر أمام+يسار)، لكن الزاوية المطلوبة فعليًا (حسب
-        // صورة مرجعية بعتها Amr موضّح عليها back/right/left/front) هي أمام+يمين —
-        // نفس مقدار الميل، بس الاتجاه المعاكس (-50).
-        rotationX = 25f; rotationY = -35f; scaleFactor = 1f; panX = 0f; panY = 0f
+        // ⚠️ نفس زاوية زرار "Reset" بالظبط (resetCamera في ViewerFragment) — الفرق
+        // الوحيد إن الدخول بيبقى بزووم أقل شوية (0.85 بدل 1) عشان الموديل يـ"فيت"
+        // مع الشاشة بهامش مريح أول ما يتفتح، وبعدين أي Reset بعد كده بيرجّع
+        // للزووم الطبيعي (1) زي المتوقع من "إعادة ضبط".
+        rotationX = 25f; rotationY = 35f; scaleFactor = 0.85f; panX = 0f; panY = 0f
         pivotOverride = null
         measurementPoints.clear()
         introActive = true
