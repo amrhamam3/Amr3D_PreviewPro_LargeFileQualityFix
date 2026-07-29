@@ -43,11 +43,18 @@ object MeshIntegrityChecker {
         val flippedTriangleCount: Int,
         val nonManifoldEdgeCount: Int,
         val checkedTriangleCount: Int,
-        val isApproximate: Boolean
+        val isApproximate: Boolean,
+        /** إحداثيات كل حافة مفتوحة (x,y,z × نقطتين لكل حافة) — لرسم Highlight بسيط
+         * فوق الموديل، مش لعرض عدد دقيق (العدد نفسه مش مهم حسب توضيح Amr). */
+        val openEdgeVertices: FloatArray
     ) {
         val isWatertight: Boolean get() = openEdgeCount == 0 && nonManifoldEdgeCount == 0
         val isPrintable: Boolean get() = isWatertight && flippedTriangleCount == 0
     }
+
+    /** سقف أمان لعدد نقاط الـ Highlight (مش المفروض يتحقق عمليًا إلا لو الملف تالف
+     * جدًا) — بيمنع استهلاك ذاكرة غير محدود لو الموديل كله عبارة عن حواف مفتوحة. */
+    private const val MAX_HIGHLIGHT_SEGMENTS = 300_000
 
     /** نفس نسبة الويلد المستخدمة في EdgeCollapseDecimator — دقيقة جدًا عمدًا،
      * غرضها توحيد نسخ الرأس المكرر بس، مش عمل تبسيط حقيقي في الخطوة دي. */
@@ -62,7 +69,7 @@ object MeshIntegrityChecker {
     fun check(model: STLModel): IntegrityReport {
         val original = model.triangleCount
         if (original == 0) {
-            return IntegrityReport(0, 0, 0, 0, isApproximate = false)
+            return IntegrityReport(0, 0, 0, 0, isApproximate = false, openEdgeVertices = FloatArray(0))
         }
 
         val isApprox = original > LARGE_MESH_TRIANGLE_THRESHOLD
@@ -93,12 +100,32 @@ object MeshIntegrityChecker {
         val cornerCount = triangleCount * 3
         val weldKeyToId = HashMap<Long, Int>(cornerCount)
         val cornerVertId = IntArray(cornerCount)
+        // موقع كل Weld ID (أول ركن اتسجل بيه — كافي جدًا لغرض الرسم، الفرق أقل بكتير
+        // من weldEps نفسه أصلاً)
+        var weldPosX = FloatArray(minOf(cornerCount, 1))
+        var weldPosY = FloatArray(weldPosX.size)
+        var weldPosZ = FloatArray(weldPosX.size)
+        fun ensureWeldPosCapacity(need: Int) {
+            if (need <= weldPosX.size) return
+            val newCap = maxOf(need, weldPosX.size * 2, 16)
+            weldPosX = weldPosX.copyOf(newCap); weldPosY = weldPosY.copyOf(newCap); weldPosZ = weldPosZ.copyOf(newCap)
+        }
         var nextId = 0
         var ci = 0; var vi = 0
         while (ci < cornerCount) {
-            val x = verts[vi].toDouble(); val y = verts[vi + 1].toDouble(); val z = verts[vi + 2].toDouble()
+            val xf = verts[vi]; val yf = verts[vi + 1]; val zf = verts[vi + 2]
+            val x = xf.toDouble(); val y = yf.toDouble(); val z = zf.toDouble()
             val key = (axisIndex(x, minX).toLong() shl 42) or (axisIndex(y, minY).toLong() shl 21) or axisIndex(z, minZ).toLong()
-            val id = weldKeyToId.getOrPut(key) { nextId++ }
+            val existing = weldKeyToId[key]
+            val id: Int
+            if (existing == null) {
+                id = nextId++
+                weldKeyToId[key] = id
+                ensureWeldPosCapacity(id + 1)
+                weldPosX[id] = xf; weldPosY[id] = yf; weldPosZ[id] = zf
+            } else {
+                id = existing
+            }
             cornerVertId[ci] = id
             ci++; vi += 3
         }
@@ -163,10 +190,24 @@ object MeshIntegrityChecker {
         val edgeFirstTri = HashMap<Long, Int>()
         val edgeFirstForward = HashMap<Long, Boolean>()
 
+        // نقاط الـ Highlight — بس مجرد إشارة "في حواف مفتوحة هنا"، مش تقرير دقيق
+        var highlightVerts = FloatArray(0)
+        var highlightCount = 0
+        fun appendHighlightSegment(idA: Int, idB: Int) {
+            if (highlightCount >= MAX_HIGHLIGHT_SEGMENTS) return
+            if (highlightVerts.isEmpty()) highlightVerts = FloatArray(4096)
+            val need = (highlightCount + 1) * 6
+            if (need > highlightVerts.size) highlightVerts = highlightVerts.copyOf(maxOf(need, highlightVerts.size * 2))
+            val off = highlightCount * 6
+            highlightVerts[off] = weldPosX[idA]; highlightVerts[off + 1] = weldPosY[idA]; highlightVerts[off + 2] = weldPosZ[idA]
+            highlightVerts[off + 3] = weldPosX[idB]; highlightVerts[off + 4] = weldPosY[idB]; highlightVerts[off + 5] = weldPosZ[idB]
+            highlightCount++
+        }
+
         fun processEdge(a: Int, b: Int, t: Int) {
             val key = edgeKey(a, b)
             when (edgeCount[key] ?: 0) {
-                1 -> openEdgeCount++
+                1 -> { openEdgeCount++; appendHighlightSegment(a, b) }
                 2 -> {
                     val firstTri = edgeFirstTri[key]
                     if (firstTri == null) {
@@ -222,7 +263,8 @@ object MeshIntegrityChecker {
             flippedTriangleCount = flippedTriangleCount,
             nonManifoldEdgeCount = nonManifoldKeys.size,
             checkedTriangleCount = triangleCount,
-            isApproximate = isApproximate
+            isApproximate = isApproximate,
+            openEdgeVertices = if (highlightCount * 6 == highlightVerts.size) highlightVerts else highlightVerts.copyOf(highlightCount * 6)
         )
     }
 }

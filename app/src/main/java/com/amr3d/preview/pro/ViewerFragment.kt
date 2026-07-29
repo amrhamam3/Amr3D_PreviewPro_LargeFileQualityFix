@@ -72,6 +72,7 @@ class ViewerFragment : Fragment() {
     private lateinit var measurementText: TextView
     private lateinit var inspectionCard: LinearLayout
     private lateinit var inspectionText: TextView
+    private lateinit var cbHighlightOpenEdges: CheckBox
     private lateinit var lightDialOverlay: LightDialOverlayView
     private lateinit var btnCloseLightWheel: ImageButton
     private lateinit var loadingContainer: View
@@ -293,6 +294,11 @@ class ViewerFragment : Fragment() {
         measurementText     = v.findViewById(R.id.measurementText)
         inspectionCard      = v.findViewById(R.id.inspectionCard)
         inspectionText      = v.findViewById(R.id.inspectionText)
+        cbHighlightOpenEdges = v.findViewById(R.id.cbHighlightOpenEdges)
+        cbHighlightOpenEdges.setOnCheckedChangeListener { _, checked ->
+            glViewerView.stlRenderer.showOpenEdgesHighlight = checked
+            glViewerView.requestRender()
+        }
         lightDialOverlay    = v.findViewById(R.id.lightDialOverlay)
         btnCloseLightWheel  = v.findViewById(R.id.btnCloseLightWheel)
         loadingContainer    = v.findViewById(R.id.loadingContainer)
@@ -888,6 +894,10 @@ class ViewerFragment : Fragment() {
                     glViewerView.stlRenderer.setModel(correctedModel)
                 }
 
+                // هايلايت الحواف المفتوحة بتاع الموديل القديم مالوش معنى مع موديل جديد
+                glViewerView.stlRenderer.showOpenEdgesHighlight = false
+                glViewerView.stlRenderer.openEdgeHighlightVertices = null
+
                 requireActivity().runOnUiThread {
                     emptyStateText.visibility  = View.GONE
                     welcomeText.visibility     = View.GONE
@@ -896,6 +906,8 @@ class ViewerFragment : Fragment() {
                     btnMeasureTool.isChecked   = false
                     btnWireframe.isChecked     = false
                     directionsPanel.visibility = View.GONE
+                    cbHighlightOpenEdges.isChecked   = false
+                    cbHighlightOpenEdges.visibility  = View.GONE
                 }
 
                 // حفظ في التاريخ — المسار الحقيقي فقط
@@ -1679,6 +1691,19 @@ class ViewerFragment : Fragment() {
             }.trimEnd('\n')
 
             inspectionText.text = dimensionsText + "\n" + printabilityText
+
+            // تشيك بوكس الهايلايت بيظهر بس لو فعلاً في حواف مفتوحة تستاهل تتلوّن —
+            // العدد نفسه مش مهم (حسب توضيح Amr)، بس وجودها من عدمه هو المهم
+            val hasOpenEdges = integrity.openEdgeVertices.isNotEmpty()
+            cbHighlightOpenEdges.visibility = if (hasOpenEdges) View.VISIBLE else View.GONE
+            if (!hasOpenEdges) {
+                cbHighlightOpenEdges.isChecked = false
+                glViewerView.stlRenderer.showOpenEdgesHighlight = false
+                glViewerView.stlRenderer.openEdgeHighlightVertices = null
+            } else {
+                glViewerView.stlRenderer.openEdgeHighlightVertices = integrity.openEdgeVertices
+            }
+            glViewerView.requestRender()
         }
     }
 }

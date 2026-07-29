@@ -305,6 +305,10 @@ class STLRenderer : GLSurfaceView.Renderer {
     private var modelMinBounds = floatArrayOf(0f, 0f, 0f)
     private var modelMaxBounds = floatArrayOf(0f, 0f, 0f)
     @Volatile var showBoundingBox = false
+    /** هايلايت بسيط للحواف المفتوحة (نتيجة MeshIntegrityChecker) — الهدف مجرد
+     * إشارة بصرية "في أماكن مفتوحة هنا"، مش تقرير دقيق (عدد الحواف مش مهم). */
+    @Volatile var showOpenEdgesHighlight = false
+    @Volatile var openEdgeHighlightVertices: FloatArray? = null
     /** true = ارسم انعكاس الموديل تحته (زي المرايا)، false = ارسم شبكة (Grid) بدله.
      * قابل للتحكم من شاشة الإعدادات. */
     @Volatile var showReflection = false // افتراضي مقفول (Grid تظهر بدله) — طلب Amr
@@ -656,6 +660,7 @@ class STLRenderer : GLSurfaceView.Renderer {
         if (pts.isNotEmpty() || hasPreview) drawMeasurementOverlay(pts, hasPreview)
         if (showPivotIndicator) drawPivotIndicator()
         if (showBoundingBox) drawBoundingBox()
+        if (showOpenEdgesHighlight) drawOpenEdgesHighlight()
     }
 
     private fun drawMesh() {
@@ -1012,6 +1017,34 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glEnableVertexAttribArray(positionHandle)
         GLES20.glVertexAttribPointer(positionHandle, 3, GLES20.GL_FLOAT, false, 0, vb)
         GLES20.glDrawArrays(GLES20.GL_LINES, 0, edges.size)
+        GLES20.glDisableVertexAttribArray(positionHandle)
+
+        GLES20.glEnable(GLES20.GL_DEPTH_TEST)
+    }
+
+    /** هايلايت بسيط للحواف المفتوحة — خطوط حمراء واضحة فوق الموديل، نفس تقنية
+     * drawBoundingBox بالظبط. الهدف بصري بحت ("في حاجة مفتوحة هنا")، مش تقرير دقيق. */
+    private fun drawOpenEdgesHighlight() {
+        val verts = openEdgeHighlightVertices
+        if (verts == null || verts.isEmpty()) return
+
+        GLES20.glUseProgram(lineProgram)
+        GLES20.glDisable(GLES20.GL_DEPTH_TEST)
+
+        val positionHandle = GLES20.glGetAttribLocation(lineProgram, "vPosition")
+        val mvpHandle = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
+        val colorHandle = GLES20.glGetUniformLocation(lineProgram, "uColor")
+
+        GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
+        GLES20.glUniform4f(colorHandle, 1f, 0.15f, 0.15f, 0.95f) // أحمر واضح
+        GLES20.glLineWidth(4f) // أعرض من صندوق الأبعاد عشان يبان بوضوح فوق سطح الموديل
+
+        val vb = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder())
+            .asFloatBuffer().apply { put(verts); position(0) }
+
+        GLES20.glEnableVertexAttribArray(positionHandle)
+        GLES20.glVertexAttribPointer(positionHandle, 3, GLES20.GL_FLOAT, false, 0, vb)
+        GLES20.glDrawArrays(GLES20.GL_LINES, 0, verts.size / 3)
         GLES20.glDisableVertexAttribArray(positionHandle)
 
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)

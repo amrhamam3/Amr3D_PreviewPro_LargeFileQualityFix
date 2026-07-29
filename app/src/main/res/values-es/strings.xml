@@ -138,6 +138,7 @@ Amr Hamam 3D © 2026</string>
     <string name="inspection_flipped_normals">⚠️ Triángulos con normal invertida: %1$d</string>
     <string name="inspection_non_manifold">⚠️ Bordes no válidos: %1$d</string>
     <string name="inspection_approximate_note">(Comprobación aproximada — modelo muy grande)</string>
+    <string name="inspection_highlight_open_edges">🔴 Resaltar zonas abiertas en el modelo</string>
 
     <string name="toast_entity_count">✅  %1$d elementos</string>
 
