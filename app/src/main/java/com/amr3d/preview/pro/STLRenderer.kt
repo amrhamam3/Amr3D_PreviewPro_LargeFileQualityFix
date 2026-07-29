@@ -189,8 +189,8 @@ class STLRenderer : GLSurfaceView.Renderer {
     private val normalMatrix = FloatArray(16)
     private val tempMatrix = FloatArray(16)
 
-    @Volatile var rotationX = -3.2f
-    @Volatile var rotationY = -34f
+    @Volatile var rotationX = 3.2f
+    @Volatile var rotationY = 34f
     @Volatile var scaleFactor = 1f
     @Volatile var panX = 0f
     @Volatile var panY = 0f
