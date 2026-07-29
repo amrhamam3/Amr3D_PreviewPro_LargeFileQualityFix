@@ -1310,7 +1310,7 @@ class ViewerFragment : Fragment() {
     private fun resetCamera() {
         val r = glViewerView.stlRenderer
         if (r.autoRotate) { r.autoRotate = false; btnAutoRotate.isChecked = false }
-        r.rotationX = -25f; r.rotationY = -35f
+        r.rotationX = -3.2f; r.rotationY = -34.0f
         r.scaleFactor = 1f; r.panX = 0f; r.panY = 0f
         r.pivotOverride = null
         glViewerView.queueEvent { r.updateProjection() }
