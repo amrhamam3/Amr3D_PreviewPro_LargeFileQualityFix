@@ -73,6 +73,8 @@ class ViewerFragment : Fragment() {
     private lateinit var inspectionCard: LinearLayout
     private lateinit var inspectionText: TextView
     private lateinit var cbHighlightOpenEdges: CheckBox
+    private lateinit var dxfGapCard: LinearLayout
+    private lateinit var cbHighlightDxfGaps: CheckBox
     private lateinit var lightDialOverlay: LightDialOverlayView
     private lateinit var btnCloseLightWheel: ImageButton
     private lateinit var loadingContainer: View
@@ -298,6 +300,11 @@ class ViewerFragment : Fragment() {
         cbHighlightOpenEdges.setOnCheckedChangeListener { _, checked ->
             glViewerView.stlRenderer.showOpenEdgesHighlight = checked
             glViewerView.requestRender()
+        }
+        dxfGapCard          = v.findViewById(R.id.dxfGapCard)
+        cbHighlightDxfGaps  = v.findViewById(R.id.cbHighlightDxfGaps)
+        cbHighlightDxfGaps.setOnCheckedChangeListener { _, checked ->
+            dxf2DView.showGapHighlight = checked
         }
         lightDialOverlay    = v.findViewById(R.id.lightDialOverlay)
         btnCloseLightWheel  = v.findViewById(R.id.btnCloseLightWheel)
@@ -843,6 +850,8 @@ class ViewerFragment : Fragment() {
         // بسرعة بسبب موديل سابق لسه قاعد. لازم يتنفذ على GL thread عشان بيلمس VBOs.
         glViewerView.queueEvent { glViewerView.stlRenderer.clearModel() }
         dxf2DView.clear() // مفيش داعي نسيب رسمة DXF قديمة قاعدة في الذاكرة ونحن بنفتح STL
+        dxfGapCard.visibility = View.GONE
+        cbHighlightDxfGaps.isChecked = false
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -961,6 +970,24 @@ class ViewerFragment : Fragment() {
                 hideLoadingBar()
 
                 dxf2DView.setModel(dxfModel)
+                dxfGapCard.visibility = View.GONE
+                cbHighlightDxfGaps.isChecked = false
+
+                // فحص الفجوات الكبيرة نسبيًا شغال بصمت في الخلفية (نفس فلسفة فحص
+                // حواف الـ STL المفتوحة) — هدفه الوحيد إظهار/إخفاء تشيك بوكس الهايلايت
+                val requestedDxfModel = dxfModel
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val gapReport = withContext(Dispatchers.Default) {
+                        DxfGapChecker.check(requestedDxfModel) { layer -> dxf2DView.isLayerVisible(layer) }
+                    }
+                    if (dxf2DView.currentModel !== requestedDxfModel || !is2DMode) return@launch // اتغيّر الملف من تحتنا
+                    if (gapReport.hasSignificantGaps) {
+                        dxfGapCard.visibility = View.VISIBLE
+                        dxf2DView.gapHighlightSegments = gapReport.gapSegments
+                    } else {
+                        dxfGapCard.visibility = View.GONE
+                    }
+                }
 
                 // زرار الطبقات بيتفعّل بس لو الملف فيه أكتر من طبقة واحدة — لو طبقة
                 // واحدة بس مفيش داعي نوريه أصلًا (زي ما طلب في البند 1)
@@ -1048,6 +1075,8 @@ class ViewerFragment : Fragment() {
         dxf2DView.measureModeOn = false
         dxf2DView.visibility = View.GONE
         dxf2DView.clear()
+        dxfGapCard.visibility = View.GONE
+        cbHighlightDxfGaps.isChecked = false
         glViewerView.visibility = View.VISIBLE
         glViewerView.onResume()
 

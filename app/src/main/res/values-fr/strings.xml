@@ -133,6 +133,7 @@ Amr Hamam 3D © 2026</string>
     <string name="inspection_depth_label">Largeur (Y) :  %1$s %2$s</string>
     <string name="inspection_height_label">Hauteur (Z) :  %1$s %2$s</string>
     <string name="inspection_highlight_open_edges">🔴 Mettre en évidence les zones ouvertes</string>
+    <string name="dxf_highlight_gaps">🔴 Mettre en évidence les espaces dans le dessin</string>
 
     <string name="toast_entity_count">✅  %1$d éléments</string>
 

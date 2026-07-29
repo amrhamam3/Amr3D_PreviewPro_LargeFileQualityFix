@@ -24,6 +24,7 @@ class DXF2DView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private var model: DxfModel? = null
+    val currentModel: DxfModel? get() = model
     private var snapPoints: List<FloatArray> = emptyList() // كل نقاط النهايات/المراكز القابلة للالتقاط [x, y]
     private val snapRadiusPx = 45f // نصف قطر الالتقاط بالبكسل — لو التاتش قريب من نقطة حقيقية بيلتصق بيها
 
@@ -117,6 +118,21 @@ class DXF2DView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
+    /** هايلايت بسيط للفجوات الكبيرة نسبيًا (نتيجة DxfGapChecker) — إشارة بصرية
+     * بحتة "في فجوة هنا"، مش تقرير دقيق (نفس فلسفة حواف الـ STL المفتوحة). */
+    var showGapHighlight = false
+        set(value) { field = value; invalidate() }
+    var gapHighlightSegments: FloatArray? = null
+        set(value) { field = value; invalidate() }
+
+    private val gapHighlightPaint = Paint().apply {
+        color = Color.parseColor("#FF2626")
+        strokeWidth = 5f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+    }
+
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -202,6 +218,8 @@ class DXF2DView @JvmOverloads constructor(
         model = m
         measureP1 = null; measureP2 = null
         hiddenLayers.clear() // كل الطبقات ظاهرة افتراضيًا مع أي ملف جديد
+        showGapHighlight = false
+        gapHighlightSegments = null
         snapPoints = buildSnapPoints(m)
         post { resetView() }
     }
@@ -318,6 +336,8 @@ class DXF2DView @JvmOverloads constructor(
         measureP1 = null; measureP2 = null
         snapPoints = emptyList()
         hiddenLayers.clear()
+        showGapHighlight = false
+        gapHighlightSegments = null
         invalidate()
     }
 
@@ -380,6 +400,21 @@ class DXF2DView @JvmOverloads constructor(
         }
 
         drawMeasurement(canvas)
+        drawGapHighlight(canvas)
+    }
+
+    private fun drawGapHighlight(canvas: Canvas) {
+        if (!showGapHighlight) return
+        val segs = gapHighlightSegments ?: return
+        var i = 0
+        while (i + 3 < segs.size) {
+            canvas.drawLine(
+                toScreenX(segs[i]), toScreenY(segs[i + 1]),
+                toScreenX(segs[i + 2]), toScreenY(segs[i + 3]),
+                gapHighlightPaint
+            )
+            i += 4
+        }
     }
 
     private val snapDotPaint = Paint().apply {

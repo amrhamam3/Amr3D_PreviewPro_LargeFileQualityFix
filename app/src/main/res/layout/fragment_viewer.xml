@@ -119,6 +119,30 @@
             android:layout_height="match_parent"
             android:visibility="gone" />
 
+        <!-- تشيك بوكس إظهار/إخفاء الفجوات في رسمة الـ DXF — بيبان بس لو في رسمة
+             DXF معروضة فعلاً ولقينا فجوات كبيرة نسبيًا فيها. فوق الشاشة (مش تحت)
+             عشان مايتعارضش مع bottomToolbar اللي بيفضل ظاهر في وضع الـ 2D. -->
+        <LinearLayout
+            android:id="@+id/dxfGapCard"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_dialog_panel"
+            android:elevation="6dp"
+            android:padding="4dp"
+            android:visibility="gone">
+            <CheckBox
+                android:id="@+id/cbHighlightDxfGaps"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_margin="8dp"
+                android:buttonTint="@color/accent_orange"
+                android:text="@string/dxf_highlight_gaps"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <!-- عداد Faces/Vertices — نص خفيف أعلى الشاشة، قابل للإخفاء من الإعدادات
              (افتراضيًا ظاهر). بيبان بس مع الموديل ثلاثي الأبعاد. -->
         <TextView

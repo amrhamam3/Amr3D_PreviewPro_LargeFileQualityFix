@@ -133,6 +133,7 @@ Amr Hamam 3D © 2026</string>
     <string name="inspection_depth_label">Ancho (Y):    %1$s %2$s</string>
     <string name="inspection_height_label">Altura (Z):   %1$s %2$s</string>
     <string name="inspection_highlight_open_edges">🔴 Resaltar zonas abiertas en el modelo</string>
+    <string name="dxf_highlight_gaps">🔴 Resaltar huecos en el dibujo</string>
 
     <string name="toast_entity_count">✅  %1$d elementos</string>
 
