@@ -1322,7 +1322,7 @@ class ViewerFragment : Fragment() {
 
         r.pivotOverride = null
         android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 650
+            duration = 950
             interpolator = android.view.animation.OvershootInterpolator(1.1f)
             addUpdateListener { a ->
                 val t = a.animatedValue as Float
