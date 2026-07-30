@@ -1351,7 +1351,7 @@ class ViewerFragment : Fragment() {
 
         r.pivotOverride = null
         android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 1250
+            duration = 1550
             interpolator = android.view.animation.OvershootInterpolator(1.1f)
             addUpdateListener { a ->
                 val t = a.animatedValue as Float
@@ -1453,7 +1453,7 @@ class ViewerFragment : Fragment() {
                         p.maskFilter = android.graphics.BlurMaskFilter(r*0.5f,
                             android.graphics.BlurMaskFilter.Blur.NORMAL)
                         p.color = (glowColor and 0x00FFFFFF) or 0x44000000
-                        c.drawCircle(cx, cy+4f, r*0.85f, p)
+                        c.drawCircle(cx, cy+4f, r*0.70f, p)
                         p.maskFilter = null
                     }
 
