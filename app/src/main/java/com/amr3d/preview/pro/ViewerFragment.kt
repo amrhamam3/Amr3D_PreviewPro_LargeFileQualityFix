@@ -1453,7 +1453,7 @@ class ViewerFragment : Fragment() {
                         p.maskFilter = android.graphics.BlurMaskFilter(r*0.5f,
                             android.graphics.BlurMaskFilter.Blur.NORMAL)
                         p.color = (glowColor and 0x00FFFFFF) or 0x44000000
-                        c.drawCircle(cx, cy+4f, r*0.70f, p)
+                        c.drawCircle(cx, cy+4f, r*0.100f, p)
                         p.maskFilter = null
                     }
 
