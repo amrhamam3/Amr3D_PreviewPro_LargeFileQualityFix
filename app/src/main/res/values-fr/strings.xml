@@ -152,6 +152,16 @@ Amr Hamam 3D © 2026</string>
     <string name="error_stl_binary_corrupt">Fichier STL binaire corrompu ou incomplet</string>
     <string name="error_stl_triangle_mismatch">Le nombre de triangles (%1$d) ne correspond pas à la taille du fichier — il est peut-être corrompu</string>
     <string name="error_stl_no_valid_triangles">Le fichier ne contient aucun triangle valide</string>
+    <string name="error_obj_too_large">Le fichier OBJ est trop volumineux</string>
+    <string name="error_obj_read_failed">Impossible de lire le fichier OBJ</string>
+    <string name="error_obj_no_vertices">Le fichier OBJ ne contient aucun sommet</string>
+    <string name="error_obj_no_faces">Le fichier OBJ ne contient aucune face valide</string>
+    <string name="error_glb_too_large">Le fichier GLB est trop volumineux</string>
+    <string name="error_glb_read_failed">Impossible de lire le fichier GLB</string>
+    <string name="error_glb_corrupt">Le fichier GLB est corrompu ou incomplet</string>
+    <string name="error_glb_not_glb">Ce fichier n\'est pas un GLB valide</string>
+    <string name="error_glb_no_json">Le fichier GLB ne contient aucune donnée JSON valide</string>
+    <string name="error_glb_no_geometry">Le fichier GLB ne contient aucune géométrie affichable</string>
     <string name="error_stl_corrupt_triangle">Fichier STL corrompu - impossible de lire le triangle n°%1$d</string>
     <string name="error_stl_invalid_value">Valeur invalide dans le fichier à : %1$s</string>
     <string name="error_stl_ascii_no_triangles">Aucun triangle valide trouvé dans le fichier STL ASCII</string>

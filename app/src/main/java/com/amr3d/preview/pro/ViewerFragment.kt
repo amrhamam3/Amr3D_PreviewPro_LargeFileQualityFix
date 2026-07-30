@@ -855,12 +855,21 @@ class ViewerFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                val ext = getFileExtension(uri)
+                val onProgress: (Int) -> Unit = { percent ->
+                    // بيتنادى من خيط IO — لازم ننقل التحديث للـ main thread
+                    requireActivity().runOnUiThread {
+                        updateLoadingBar(getString(R.string.loading_analyzing), percent)
+                    }
+                }
+                // ⚠️ التوزيع حسب امتداد الملف — الثلاثة قارئين (STL/OBJ/GLB) بيرجّعوا
+                // نفس شكل STLModel المسطّح بالظبط، فباقي التطبيق (الرندرر، أدوات
+                // القياس، تقرير الفحص، التبسيط...) شغال من غير أي تعديل تاني
                 val model = withContext(Dispatchers.IO) {
-                    STLParser.parse(requireContext(), uri) { percent ->
-                        // بيتنادى من خيط IO — لازم ننقل التحديث للـ main thread
-                        requireActivity().runOnUiThread {
-                            updateLoadingBar(getString(R.string.loading_analyzing), percent)
-                        }
+                    when (ext) {
+                        "obj" -> OBJParser.parse(requireContext(), uri, onProgress)
+                        "glb" -> GLBParser.parse(requireContext(), uri, onProgress)
+                        else  -> STLParser.parse(requireContext(), uri, onProgress)
                     }
                 }
 

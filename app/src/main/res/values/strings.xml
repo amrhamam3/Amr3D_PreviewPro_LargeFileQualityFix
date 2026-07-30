@@ -156,6 +156,16 @@ Amr Hamam 3D © 2026</string>
     <string name="error_stl_binary_corrupt">ملف STL (Binary) تالف أو غير مكتمل</string>
     <string name="error_stl_triangle_mismatch">عدد المثلثات في الملف (%1$d) لا يتطابق مع حجم الملف — الملف قد يكون تالفًا</string>
     <string name="error_stl_no_valid_triangles">الملف لا يحتوي على أي مثلثات صالحة</string>
+    <string name="error_obj_too_large">ملف OBJ كبير جدًا</string>
+    <string name="error_obj_read_failed">تعذر قراءة ملف OBJ</string>
+    <string name="error_obj_no_vertices">ملف OBJ لا يحتوي على أي رؤوس (vertices)</string>
+    <string name="error_obj_no_faces">ملف OBJ لا يحتوي على أي أوجه (faces) صالحة</string>
+    <string name="error_glb_too_large">ملف GLB كبير جدًا</string>
+    <string name="error_glb_read_failed">تعذر قراءة ملف GLB</string>
+    <string name="error_glb_corrupt">ملف GLB تالف أو غير مكتمل</string>
+    <string name="error_glb_not_glb">هذا الملف ليس بصيغة GLB صالحة</string>
+    <string name="error_glb_no_json">ملف GLB لا يحتوي على بيانات JSON صالحة</string>
+    <string name="error_glb_no_geometry">ملف GLB لا يحتوي على أي هندسة (geometry) قابلة للعرض</string>
     <string name="error_stl_corrupt_triangle">ملف STL تالف - لا يمكن قراءة المثلث رقم %1$d</string>
     <string name="error_stl_invalid_value">قيمة غير صالحة في الملف عند: %1$s</string>
     <string name="error_stl_ascii_no_triangles">لم يتم العثور على أي مثلثات صالحة في ملف الـ ASCII STL</string>

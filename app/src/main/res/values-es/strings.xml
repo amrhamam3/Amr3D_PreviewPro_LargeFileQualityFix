@@ -152,6 +152,16 @@ Amr Hamam 3D © 2026</string>
     <string name="error_stl_binary_corrupt">El archivo STL binario está dañado o incompleto</string>
     <string name="error_stl_triangle_mismatch">El número de triángulos (%1$d) no coincide con el tamaño del archivo — puede estar dañado</string>
     <string name="error_stl_no_valid_triangles">El archivo no contiene triángulos válidos</string>
+    <string name="error_obj_too_large">El archivo OBJ es demasiado grande</string>
+    <string name="error_obj_read_failed">No se pudo leer el archivo OBJ</string>
+    <string name="error_obj_no_vertices">El archivo OBJ no contiene vértices</string>
+    <string name="error_obj_no_faces">El archivo OBJ no contiene caras válidas</string>
+    <string name="error_glb_too_large">El archivo GLB es demasiado grande</string>
+    <string name="error_glb_read_failed">No se pudo leer el archivo GLB</string>
+    <string name="error_glb_corrupt">El archivo GLB está corrupto o incompleto</string>
+    <string name="error_glb_not_glb">Este archivo no es un GLB válido</string>
+    <string name="error_glb_no_json">El archivo GLB no contiene datos JSON válidos</string>
+    <string name="error_glb_no_geometry">El archivo GLB no contiene geometría visible</string>
     <string name="error_stl_corrupt_triangle">Archivo STL dañado - no se puede leer el triángulo n.º %1$d</string>
     <string name="error_stl_invalid_value">Valor no válido en el archivo en: %1$s</string>
     <string name="error_stl_ascii_no_triangles">No se encontraron triángulos válidos en el archivo STL ASCII</string>
