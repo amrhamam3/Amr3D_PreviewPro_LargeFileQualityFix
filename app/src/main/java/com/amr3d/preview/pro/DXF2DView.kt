@@ -24,17 +24,9 @@ class DXF2DView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private var model: DxfModel? = null
+    val currentModel: DxfModel? get() = model
     private var snapPoints: List<FloatArray> = emptyList() // كل نقاط النهايات/المراكز القابلة للالتقاط [x, y]
     private val snapRadiusPx = 45f // نصف قطر الالتقاط بالبكسل — لو التاتش قريب من نقطة حقيقية بيلتصق بيها
-
-    /** ⚠️ إصلاح أداء جوهري: بدل ما نرسم كل خط/قوس/دائرة بنداء Canvas منفصل على
-     * كل فريم (كارثي لأي ملف بعشرات/مئات الآلاف من العناصر — لوحظ فعليًا: ملف
-     * DXF بـ 116 ألف VERTEX كان بيولّد ~116 ألف نداء drawLine() في كل فريم واحد،
-     * يعني تجميد فعلي أثناء أي حركة زووم/سحب)، بنجمّع كل عناصر نفس اللون في
-     * android.graphics.Path واحد **مرة واحدة بس** (وقت تحميل الملف أو تغيير
-     * إظهار طبقة)، وبعدين بنرسم كل Path بنداء drawPath() واحد بس — من عشرات
-     * الآلاف من النداءات لعدد قليل جدًا (بعدد الألوان المختلفة الفعلية). */
-    private var colorPaths: Map<Int, android.graphics.Path> = emptyMap()
 
     // ══ إخفاء/إظهار الطبقات (Layers) ══
     // بيحتوي على أسماء الطبقات المخفية فقط — أي طبقة مش موجودة هنا معناها ظاهرة (الحالة الافتراضية)
@@ -126,6 +118,21 @@ class DXF2DView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
+    /** هايلايت بسيط للفجوات الكبيرة نسبيًا (نتيجة DxfGapChecker) — إشارة بصرية
+     * بحتة "في فجوة هنا"، مش تقرير دقيق (نفس فلسفة حواف الـ STL المفتوحة). */
+    var showGapHighlight = false
+        set(value) { field = value; invalidate() }
+    var gapHighlightSegments: FloatArray? = null
+        set(value) { field = value; invalidate() }
+
+    private val gapHighlightPaint = Paint().apply {
+        color = Color.parseColor("#FF2626")
+        strokeWidth = 5f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+    }
+
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -211,47 +218,10 @@ class DXF2DView @JvmOverloads constructor(
         model = m
         measureP1 = null; measureP2 = null
         hiddenLayers.clear() // كل الطبقات ظاهرة افتراضيًا مع أي ملف جديد
+        showGapHighlight = false
+        gapHighlightSegments = null
         snapPoints = buildSnapPoints(m)
-        rebuildColorPaths()
         post { resetView() }
-    }
-
-    /** بيبني (أو يعيد بناء) الـ Path المجمّع لكل لون — شوف تعليق colorPaths فوق
-     * للسبب. بيتنادى مرة واحدة بس عند تحميل موديل جديد أو تغيير إظهار طبقة،
-     * مش في onDraw()، عشان التكلفة الحقيقية (المشي على كل العناصر) تحصل مرة
-     * واحدة بس مش في كل فريم. */
-    private fun rebuildColorPaths() {
-        val m = model
-        if (m == null) { colorPaths = emptyMap(); return }
-        val builders = HashMap<Int, android.graphics.Path>()
-        fun pathFor(color: Int) = builders.getOrPut(color) { android.graphics.Path() }
-
-        for (line in m.lines) {
-            if (!isLayerVisible(line.layer)) continue
-            val p = pathFor(line.color)
-            p.moveTo(line.x1, line.y1)
-            p.lineTo(line.x2, line.y2)
-        }
-        for (circle in m.circles) {
-            if (!isLayerVisible(circle.layer)) continue
-            val p = pathFor(circle.color)
-            p.addCircle(circle.cx, circle.cy, circle.r, android.graphics.Path.Direction.CW)
-        }
-        for (arc in m.arcs) {
-            if (!isLayerVisible(arc.layer)) continue
-            val p = pathFor(arc.color)
-            var end = arc.endDeg
-            if (end <= arc.startDeg) end += 360f
-            val totalAngle = end - arc.startDeg
-            val segments = 48
-            for (s in 0..segments) {
-                val angle = Math.toRadians((arc.startDeg + s * totalAngle / segments).toDouble())
-                val x = arc.cx + arc.r * cos(angle).toFloat()
-                val y = arc.cy + arc.r * sin(angle).toFloat()
-                if (s == 0) p.moveTo(x, y) else p.lineTo(x, y)
-            }
-        }
-        colorPaths = builders
     }
 
     /** بيرجّع أسماء كل الطبقات الموجودة في الملف الحالي، بترتيب ظهورها. فاضية لو مفيش موديل محمّل. */
@@ -283,7 +253,6 @@ class DXF2DView @JvmOverloads constructor(
     fun setLayerVisible(layer: String, visible: Boolean) {
         if (visible) hiddenLayers.remove(layer) else hiddenLayers.add(layer)
         model?.let { snapPoints = buildSnapPoints(it) }
-        rebuildColorPaths()
         invalidate()
     }
 
@@ -367,7 +336,8 @@ class DXF2DView @JvmOverloads constructor(
         measureP1 = null; measureP2 = null
         snapPoints = emptyList()
         hiddenLayers.clear()
-        colorPaths = emptyMap()
+        showGapHighlight = false
+        gapHighlightSegments = null
         invalidate()
     }
 
@@ -402,26 +372,49 @@ class DXF2DView @JvmOverloads constructor(
 
         drawGrid(canvas)
 
-        if (model == null) return
+        val m = model ?: return
 
-        // ── نطبّق الزووم/التحريك على الـ Canvas نفسه (عملية مصفوفة رخيصة جدًا)
-        // بدل ما نحوّل كل نقطة بإحداثياتها يدويًا زي الأول — وده اللي بيخلّينا
-        // نقدر نرسم Path واحد مبني بإحداثيات الرسمة الخام مباشرة (Path معاد
-        // بناؤه بس لما الموديل أو الطبقات تتغيّر، مش كل فريم) ──
-        canvas.save()
-        canvas.translate(offsetX, offsetY)
-        canvas.scale(scale, -scale)
-        // سمك الخط لازم يتقسم على الزووم الحالي عشان يفضل بنفس السمك على الشاشة
-        // بصريًا (الـ Canvas.scale بيكبّر/يصغّر سمك الخط كمان مش بس الموقع)
-        val effectiveStrokeWidth = if (scale > 0.0001f) 3f / scale else 3f
-        defaultPaint.strokeWidth = effectiveStrokeWidth
-        for ((color, path) in colorPaths) {
-            defaultPaint.color = color
-            canvas.drawPath(path, defaultPaint)
+        for (line in m.lines) {
+            if (!isLayerVisible(line.layer)) continue
+            defaultPaint.color = line.color
+            canvas.drawLine(
+                toScreenX(line.x1), toScreenY(line.y1),
+                toScreenX(line.x2), toScreenY(line.y2),
+                defaultPaint
+            )
         }
-        canvas.restore()
+
+        for (circle in m.circles) {
+            if (!isLayerVisible(circle.layer)) continue
+            defaultPaint.color = circle.color
+            canvas.drawCircle(
+                toScreenX(circle.cx), toScreenY(circle.cy),
+                circle.r * scale, defaultPaint
+            )
+        }
+
+        for (arc in m.arcs) {
+            if (!isLayerVisible(arc.layer)) continue
+            defaultPaint.color = arc.color
+            drawArc(canvas, arc)
+        }
 
         drawMeasurement(canvas)
+        drawGapHighlight(canvas)
+    }
+
+    private fun drawGapHighlight(canvas: Canvas) {
+        if (!showGapHighlight) return
+        val segs = gapHighlightSegments ?: return
+        var i = 0
+        while (i + 3 < segs.size) {
+            canvas.drawLine(
+                toScreenX(segs[i]), toScreenY(segs[i + 1]),
+                toScreenX(segs[i + 2]), toScreenY(segs[i + 3]),
+                gapHighlightPaint
+            )
+            i += 4
+        }
     }
 
     private val snapDotPaint = Paint().apply {
@@ -487,6 +480,23 @@ class DXF2DView @JvmOverloads constructor(
                 8f, 8f, measureLabelBgPaint
             )
             canvas.drawText(label, labelX - textWidth / 2f, labelY, measureTextPaint)
+        }
+    }
+
+    private fun drawArc(canvas: Canvas, arc: DxfArc) {
+        val segments = 48
+        var end = arc.endDeg
+        if (end <= arc.startDeg) end += 360f
+        val totalAngle = end - arc.startDeg
+        var prevX = 0f; var prevY = 0f
+        for (s in 0..segments) {
+            val angle = Math.toRadians((arc.startDeg + s * totalAngle / segments).toDouble())
+            val x = arc.cx + arc.r * cos(angle).toFloat()
+            val y = arc.cy + arc.r * sin(angle).toFloat()
+            if (s > 0) {
+                canvas.drawLine(toScreenX(prevX), toScreenY(prevY), toScreenX(x), toScreenY(y), defaultPaint)
+            }
+            prevX = x; prevY = y
         }
     }
 
