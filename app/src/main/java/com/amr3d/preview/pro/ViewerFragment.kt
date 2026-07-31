@@ -1724,7 +1724,16 @@ class ViewerFragment : Fragment() {
         // مفيش أي معالجة أو تبسيط للموديل هنا (ده حصريًا شاشة السلايزر).
         val requestedModel = model
         viewLifecycleOwner.lifecycleScope.launch {
-            val integrity = withContext(Dispatchers.Default) { MeshIntegrityChecker.check(requestedModel) }
+            // ⚠️ حماية دفاعية: أي استثناء غير متوقع هنا (حتى لو نادر جدًا) ما ينفعش
+            // يسيب الشيك بوكس في حالة مش واضحة من غير أي أثر — بنسجّله في Logcat
+            // (تاج "MeshIntegrityChecker") عشان لو تكرر نقدر نشخّصه بالظبط.
+            val integrity = try {
+                withContext(Dispatchers.Default) { MeshIntegrityChecker.check(requestedModel) }
+            } catch (e: Throwable) {
+                android.util.Log.e("MeshIntegrityChecker", "فشل فحص الحواف المفتوحة", e)
+                null
+            }
+            if (integrity == null) return@launch
             // لو المستخدم فتح ملف تاني أو قفل الكارت وهو الفحص شغال، متأثرش على حاجة
             if (currentModel !== requestedModel || inspectionCard.visibility != View.VISIBLE) return@launch
 
