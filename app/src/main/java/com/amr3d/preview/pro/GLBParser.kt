@@ -219,6 +219,9 @@ object GLBParser {
         fun identity4(): DoubleArray = doubleArrayOf(
             1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0, 0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0
         )
+        fun uniformScale4(s: Double): DoubleArray = doubleArrayOf(
+            s,0.0,0.0,0.0, 0.0,s,0.0,0.0, 0.0,0.0,s,0.0, 0.0,0.0,0.0,1.0
+        )
         fun mul4(a: DoubleArray, b: DoubleArray): DoubleArray {
             val r = DoubleArray(16)
             for (col in 0 until 4) for (row in 0 until 4) {
@@ -382,7 +385,16 @@ object GLBParser {
             for (i in 0 until nodes.length()) rootNodeIndices.add(i)
         }
         onProgress(40)
-        for (rootIdx in rootNodeIndices) walkNode(rootIdx, identity4())
+        // ⚠️ glTF/GLB بيفرض معيار وحدة إجباري في الصيغة نفسها: كل القيم بالمتر.
+        // باقي التطبيق (STL/OBJ، أدوات القياس، إعدادات الجودة...) شغال بافتراض
+        // إن القيمة الخام = ملليمتر (المعيار الشائع في CAD/الطباعة ثلاثية الأبعاد).
+        // من غير التحويل ده، مكعب حقيقي 10سم (= 0.1 متر في ملف الـ GLB) كان
+        // بيتحسب/يتعرض كـ 0.1 ملم بالغلط (أصغر بـ 1000 مرة من المفروض بالظبط) —
+        // بلاغ حقيقي من Amr. الحل: نبدأ شجرة التحويلات بمصفوفة تكبير ×1000 بدل
+        // الهوية العادية، فكل نقطة نهائية (بغض النظر عن أي تحويلات Node إضافية)
+        // بتتحول تلقائيًا لملليمتر قبل ما توصل للرندرر/أدوات القياس.
+        val METERS_TO_MILLIMETERS = 1000.0
+        for (rootIdx in rootNodeIndices) walkNode(rootIdx, uniformScale4(METERS_TO_MILLIMETERS))
         onProgress(90)
 
         if (keptCount == 0) {
