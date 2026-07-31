@@ -344,7 +344,13 @@ class STLRenderer : GLSurfaceView.Renderer {
      * دالة بيانات خالصة (Pure) — آمنة تتنادى من أي Thread (مش لازم GL thread)، عشان
      * أي جزء تاني في التطبيق (زي أدوات القياس في الـ Fragment) يقدر يزامن نسخته
      * من بيانات الموديل مع نفس البيانات اللي فعليًا بترتسم على الشاشة. */
-    fun applyAxisConvention(model: STLModel): STLModel = if (zUpMode) swapYZ(model) else model
+    /** [sourceIsAlwaysYUp] = true لملفات زي GLB اللي بتفرض معيار Y-up إجباري في
+     * الصيغة نفسها (عكس STL/OBJ اللي مفيهمش معيار ثابت، فبنسيب تصحيح zUpMode
+     * يشتغل عليهم زي ما هو). تطبيق نفس دوران التصحيح على بيانات GLB (أصلاً صح)
+     * بيطلّع الموديل بزاوية غلط — مش انعكاس مرآة حرفي، بس دوران 90° خاطئ حوالين
+     * محور X بيخلي شكله "معكوس" بصريًا للمستخدم. */
+    fun applyAxisConvention(model: STLModel, sourceIsAlwaysYUp: Boolean = false): STLModel =
+        if (zUpMode && !sourceIsAlwaysYUp) swapYZ(model) else model
 
     /** ملحوظة: بيفترض إن الموديل الممرّر هنا اتطبّق عليه applyAxisConvention() بالفعل
      * من المستدعي — مش بيعمل التبديل تاني هنا عشان نتجنب تبديل مزدوج (اللي هيرجّع

@@ -904,7 +904,7 @@ class ViewerFragment : Fragment() {
                 // applyAxisConvention بتشتغل على simplifiedModel (الموديل بعد التبسيط،
                 // لو حصل) عشان أدوات القياس/الفحص تتعامل مع نفس البيانات المبسّطة
                 // المعروضة فعليًا على الشاشة، مش النسخة الخام الأصلية.
-                val correctedModel = glViewerView.stlRenderer.applyAxisConvention(simplifiedModel)
+                val correctedModel = glViewerView.stlRenderer.applyAxisConvention(simplifiedModel, sourceIsAlwaysYUp = (ext == "glb"))
                 currentModel = correctedModel
 
                 // رفع الموديل على GL thread
