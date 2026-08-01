@@ -1716,16 +1716,20 @@ class ViewerFragment : Fragment() {
             getString(R.string.inspection_height_label, "%.2f".format(report.height), u)
         inspectionCard.visibility  = View.VISIBLE
         measurementCard.visibility = View.GONE
-        cbHighlightOpenEdges.visibility = View.GONE // بيبان بس لو الفحص الصامت تحت لقى حواف مفتوحة فعلاً
+        // ✅ التشيك بوكس ظاهر دايمًا فور فتح كارت الفحص — بغض النظر لو الموديل
+        // فيه حواف مفتوحة ولا لأ. الفحص نفسه (تحت) بيحدد بس هل في بيانات فعلية
+        // نرسمها لو المستخدم فعّله، مش هل الزرار نفسه يبان أو يختفي.
+        cbHighlightOpenEdges.visibility = View.VISIBLE
 
         // شاشة الفحص مفيهاش أي نص "جاري الفحص/المعالجة" — دورها بس عرض الأبعاد
         // فورًا (زي ما هو فوق). الفحص عن الحواف المفتوحة بيشتغل بصمت في الخلفية
-        // (Dispatchers.Default) وهدفه الوحيد إظهار/إخفاء تشيك بوكس الهايلايت —
-        // مفيش أي معالجة أو تبسيط للموديل هنا (ده حصريًا شاشة السلايزر).
+        // (Dispatchers.Default) وهدفه تجهيز بيانات الـ Highlight لو المستخدم
+        // فعّل التشيك بوكس — مفيش أي معالجة أو تبسيط للموديل هنا (ده حصريًا
+        // شاشة السلايزر).
         val requestedModel = model
         viewLifecycleOwner.lifecycleScope.launch {
             // ⚠️ حماية دفاعية: أي استثناء غير متوقع هنا (حتى لو نادر جدًا) ما ينفعش
-            // يسيب الشيك بوكس في حالة مش واضحة من غير أي أثر — بنسجّله في Logcat
+            // يسيب حالة الفحص غير واضحة من غير أي أثر — بنسجّله في Logcat
             // (تاج "MeshIntegrityChecker") عشان لو تكرر نقدر نشخّصه بالظبط.
             val integrity = try {
                 withContext(Dispatchers.Default) { MeshIntegrityChecker.check(requestedModel) }
@@ -1737,15 +1741,10 @@ class ViewerFragment : Fragment() {
             // لو المستخدم فتح ملف تاني أو قفل الكارت وهو الفحص شغال، متأثرش على حاجة
             if (currentModel !== requestedModel || inspectionCard.visibility != View.VISIBLE) return@launch
 
+            // لو مفيش حواف مفتوحة أصلاً، مفيش بيانات نرسمها — التشيك بوكس نفسه
+            // بيفضل ظاهر ومتاح (المستخدم ممكن يسيبه مفعّل، مجرد مالوش أي تأثير بصري)
             val hasOpenEdges = integrity.openEdgeVertices.isNotEmpty()
-            cbHighlightOpenEdges.visibility = if (hasOpenEdges) View.VISIBLE else View.GONE
-            if (hasOpenEdges) {
-                glViewerView.stlRenderer.openEdgeHighlightVertices = integrity.openEdgeVertices
-            } else {
-                cbHighlightOpenEdges.isChecked = false
-                glViewerView.stlRenderer.showOpenEdgesHighlight = false
-                glViewerView.stlRenderer.openEdgeHighlightVertices = null
-            }
+            glViewerView.stlRenderer.openEdgeHighlightVertices = if (hasOpenEdges) integrity.openEdgeVertices else null
             glViewerView.requestRender()
         }
     }
