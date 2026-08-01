@@ -72,9 +72,6 @@ class ViewerFragment : Fragment() {
     private lateinit var measurementText: TextView
     private lateinit var inspectionCard: LinearLayout
     private lateinit var inspectionText: TextView
-    private lateinit var cbHighlightOpenEdges: CheckBox
-    private lateinit var dxfGapCard: LinearLayout
-    private lateinit var cbHighlightDxfGaps: CheckBox
     private lateinit var lightDialOverlay: LightDialOverlayView
     private lateinit var btnCloseLightWheel: ImageButton
     private lateinit var loadingContainer: View
@@ -296,16 +293,6 @@ class ViewerFragment : Fragment() {
         measurementText     = v.findViewById(R.id.measurementText)
         inspectionCard      = v.findViewById(R.id.inspectionCard)
         inspectionText      = v.findViewById(R.id.inspectionText)
-        cbHighlightOpenEdges = v.findViewById(R.id.cbHighlightOpenEdges)
-        cbHighlightOpenEdges.setOnCheckedChangeListener { _, checked ->
-            glViewerView.stlRenderer.showOpenEdgesHighlight = checked
-            glViewerView.requestRender()
-        }
-        dxfGapCard          = v.findViewById(R.id.dxfGapCard)
-        cbHighlightDxfGaps  = v.findViewById(R.id.cbHighlightDxfGaps)
-        cbHighlightDxfGaps.setOnCheckedChangeListener { _, checked ->
-            dxf2DView.showGapHighlight = checked
-        }
         lightDialOverlay    = v.findViewById(R.id.lightDialOverlay)
         btnCloseLightWheel  = v.findViewById(R.id.btnCloseLightWheel)
         loadingContainer    = v.findViewById(R.id.loadingContainer)
@@ -584,6 +571,19 @@ class ViewerFragment : Fragment() {
         private const val DXF_LARGE_FILE_BYTES = 10L * 1024L * 1024L  // 10 ميجابايت
     }
 
+    /** أنواع الملفات المدعومة — DXF/AI بيترسموا كرسمة ثنائية الأبعاد (نفس مسار
+     * DXF بالظبط، الاتنين بيتحوّلوا لنفس شكل [DxfModel])، وأي حاجة تانية بترسم
+     * كموديل صلب ثلاثي الأبعاد (STL/OBJ/GLB بيتحوّلوا لنفس شكل [STLModel]). */
+    private enum class FileKind { STL, OBJ, GLB, DXF, AI }
+
+    private fun fileKindFromExtension(ext: String): FileKind = when (ext) {
+        "dxf" -> FileKind.DXF
+        "ai"  -> FileKind.AI
+        "obj" -> FileKind.OBJ
+        "glb" -> FileKind.GLB
+        else  -> FileKind.STL // افتراضي (زي السلوك القديم: أي امتداد غير معروف كان بيتعامل كـ STL)
+    }
+
     // ══ تحميل الملف — آمن حتى قبل onViewCreated ══
     fun loadFile(uri: Uri) {
         // إذا لم يكن الـ View جاهزاً بعد، نحفظ الـ URI ونحمّله لاحقاً
@@ -592,7 +592,7 @@ class ViewerFragment : Fragment() {
             return
         }
 
-        val isStl = getFileExtension(uri) != "dxf"
+        val kind = fileKindFromExtension(getFileExtension(uri))
 
         // بنحسب حجم الملف بسرعة (من غير ما نفتحه كامل) قبل أي قراءة فعلية —
         // عشان نقدر نعرض رسالة التنبيه للملفات الكبيرة (البند 1.1) قبل ما نبدأ
@@ -600,11 +600,11 @@ class ViewerFragment : Fragment() {
             val sizeBytes = withContext(Dispatchers.IO) { quickFileSize(uri) }
             if (!isAdded || view == null) return@launch
 
-            val threshold = if (isStl) STL_LARGE_FILE_BYTES else DXF_LARGE_FILE_BYTES
+            val threshold = if (kind == FileKind.DXF || kind == FileKind.AI) DXF_LARGE_FILE_BYTES else STL_LARGE_FILE_BYTES
             if (sizeBytes >= 0 && sizeBytes >= threshold) {
-                showLargeFileWarning(uri, isStl, sizeBytes)
+                showLargeFileWarning(uri, kind, sizeBytes)
             } else {
-                proceedToLoad(uri, isStl, forceSimplify = false)
+                proceedToLoad(uri, kind, forceSimplify = false)
             }
         }
     }
@@ -642,8 +642,9 @@ class ViewerFragment : Fragment() {
         }
     }
 
-    private fun proceedToLoad(uri: Uri, isStl: Boolean, forceSimplify: Boolean) {
-        if (isStl) loadStlFile(uri, forceSimplify) else loadDxfFile(uri)
+    private fun proceedToLoad(uri: Uri, kind: FileKind, forceSimplify: Boolean) {
+        if (kind == FileKind.DXF || kind == FileKind.AI) load2DModelFile(uri, kind)
+        else load3DModelFile(uri, kind, forceSimplify)
     }
 
     /** نافذة تأكيد بشكل موحّد مع هوية التطبيق (خلفية داكنة + إطار خارجي، زي نافذة
@@ -726,7 +727,7 @@ class ViewerFragment : Fragment() {
     }
 
     /** رسالة التنبيه الأولى: الملف كبير، استمرار/رجوع (البند 1.1 - خطوة 1) */
-    private fun showLargeFileWarning(uri: Uri, isStl: Boolean, sizeBytes: Long) {
+    private fun showLargeFileWarning(uri: Uri, kind: FileKind, sizeBytes: Long) {
         if (!isAdded) return
         val sizeMb = sizeBytes / (1024.0 * 1024.0)
         val sizeText = String.format(Locale.US, "%.1f", sizeMb)
@@ -735,17 +736,21 @@ class ViewerFragment : Fragment() {
             message = getString(R.string.large_file_warning_message, sizeText),
             positiveText = getString(R.string.large_file_btn_continue),
             negativeText = getString(R.string.large_file_btn_back),
-            onPositive = { showLargeFileConfirm(uri, isStl) },
+            onPositive = { showLargeFileConfirm(uri, kind) },
             // "رجوع" → إلغاء التحميل تمامًا، رجوع لحالة "لا يوجد ملف محمّل" (ما بيحصلش أي تغيير)
             onNegative = {}
         )
     }
 
-    /** رسالة التأكيد التانية: توضيح التبسيط (لـ STL) أو تأكيد عام (لـ DXF) — البند 1.1 خطوة 2 */
-    private fun showLargeFileConfirm(uri: Uri, isStl: Boolean) {
+    /** رسالة التأكيد التانية: توضيح التبسيط (لأي موديل صلب ثلاثي الأبعاد: STL/OBJ/GLB)
+     * أو تأكيد عام (لـ DXF) — البند 1.1 خطوة 2 */
+    private fun showLargeFileConfirm(uri: Uri, kind: FileKind) {
         if (!isAdded) return
-        // DXF ملف ثنائي الأبعاد بيتفهرس بطريقة مختلفة تمامًا ومفيهوش تبسيط (البند 1.2 خاص بـ STL بس)
-        val message = if (isStl) getString(R.string.large_file_simplify_message)
+        // DXF/AI ملفات ثنائية الأبعاد بتتفهرس بطريقة مختلفة تمامًا ومفيهاش تبسيط —
+        // أي صيغة تانية (STL/OBJ/GLB) بتتحوّل لنفس شكل STLModel الموحّد فالتبسيط
+        // بيتطبق عليها كلها بنفس الطريقة بالظبط
+        val isSolid3D = kind != FileKind.DXF && kind != FileKind.AI
+        val message = if (isSolid3D) getString(R.string.large_file_simplify_message)
                       else getString(R.string.large_file_confirm_message_generic)
         showStyledConfirmDialog(
             title = getString(R.string.large_file_confirm_title),
@@ -840,7 +845,11 @@ class ViewerFragment : Fragment() {
         glViewerView.queueEvent { glViewerView.stlRenderer.clearMeasurementPoints() }
     }
 
-    private fun loadStlFile(uri: Uri, forceSimplify: Boolean = false) {
+    /** مسار تحميل أي موديل صلب ثلاثي الأبعاد (STL/OBJ/GLB) — الثلاثة بيتحوّلوا
+     * لنفس شكل [STLModel] الموحّد فبيمشوا في نفس المسار بالظبط بعد القراءة (نفس
+     * التبسيط، نفس تصحيح المحور، نفس أدوات القياس/الفحص) — الفرق الوحيد هو قارئ
+     * الملف المستخدم في البداية. */
+    private fun load3DModelFile(uri: Uri, kind: FileKind, forceSimplify: Boolean = false) {
         switchTo3DMode()
         resetMeasurementState()
         modelStatsText.visibility = View.GONE
@@ -849,27 +858,21 @@ class ViewerFragment : Fragment() {
         // مش بس عند تبديل الوضع، عشان حتى تحميل ملف واحد كبير لوحده منوصلش لحد الذاكرة
         // بسرعة بسبب موديل سابق لسه قاعد. لازم يتنفذ على GL thread عشان بيلمس VBOs.
         glViewerView.queueEvent { glViewerView.stlRenderer.clearModel() }
-        dxf2DView.clear() // مفيش داعي نسيب رسمة DXF قديمة قاعدة في الذاكرة ونحن بنفتح STL
-        dxfGapCard.visibility = View.GONE
-        cbHighlightDxfGaps.isChecked = false
+        dxf2DView.clear() // مفيش داعي نسيب رسمة DXF قديمة قاعدة في الذاكرة ونحن بنفتح موديل صلب
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val ext = getFileExtension(uri)
-                val onProgress: (Int) -> Unit = { percent ->
+                val progressCallback: (Int) -> Unit = { percent ->
                     // بيتنادى من خيط IO — لازم ننقل التحديث للـ main thread
                     requireActivity().runOnUiThread {
                         updateLoadingBar(getString(R.string.loading_analyzing), percent)
                     }
                 }
-                // ⚠️ التوزيع حسب امتداد الملف — الثلاثة قارئين (STL/OBJ/GLB) بيرجّعوا
-                // نفس شكل STLModel المسطّح بالظبط، فباقي التطبيق (الرندرر، أدوات
-                // القياس، تقرير الفحص، التبسيط...) شغال من غير أي تعديل تاني
                 val model = withContext(Dispatchers.IO) {
-                    when (ext) {
-                        "obj" -> OBJParser.parse(requireContext(), uri, onProgress)
-                        "glb" -> GLBParser.parse(requireContext(), uri, onProgress)
-                        else  -> STLParser.parse(requireContext(), uri, onProgress)
+                    when (kind) {
+                        FileKind.OBJ -> OBJParser.parse(requireContext(), uri, progressCallback)
+                        FileKind.GLB -> GLBParser.parse(requireContext(), uri, progressCallback)
+                        else -> STLParser.parse(requireContext(), uri, progressCallback)
                     }
                 }
 
@@ -904,17 +907,13 @@ class ViewerFragment : Fragment() {
                 // applyAxisConvention بتشتغل على simplifiedModel (الموديل بعد التبسيط،
                 // لو حصل) عشان أدوات القياس/الفحص تتعامل مع نفس البيانات المبسّطة
                 // المعروضة فعليًا على الشاشة، مش النسخة الخام الأصلية.
-                val correctedModel = glViewerView.stlRenderer.applyAxisConvention(simplifiedModel, sourceIsAlwaysYUp = (ext == "glb"))
+                val correctedModel = glViewerView.stlRenderer.applyAxisConvention(simplifiedModel)
                 currentModel = correctedModel
 
                 // رفع الموديل على GL thread
                 glViewerView.queueEvent {
                     glViewerView.stlRenderer.setModel(correctedModel)
                 }
-
-                // هايلايت الحواف المفتوحة بتاع الموديل القديم مالوش معنى مع موديل جديد
-                glViewerView.stlRenderer.showOpenEdgesHighlight = false
-                glViewerView.stlRenderer.openEdgeHighlightVertices = null
 
                 requireActivity().runOnUiThread {
                     emptyStateText.visibility  = View.GONE
@@ -924,8 +923,6 @@ class ViewerFragment : Fragment() {
                     btnMeasureTool.isChecked   = false
                     btnWireframe.isChecked     = false
                     directionsPanel.visibility = View.GONE
-                    cbHighlightOpenEdges.isChecked   = false
-                    cbHighlightOpenEdges.visibility  = View.GONE
                 }
 
                 // حفظ في التاريخ — المسار الحقيقي فقط
@@ -955,19 +952,21 @@ class ViewerFragment : Fragment() {
         }
     }
 
-    /** مسار تحميل ملفات DXF — شاشة عرض 2D حقيقية منفصلة تماماً عن محرك الـ 3D */
-    private fun loadDxfFile(uri: Uri) {
+    /** مسار تحميل أي موديل ثنائي الأبعاد (DXF/AI) — شاشة عرض 2D حقيقية منفصلة
+     * تماماً عن محرك الـ 3D. الاتنين بيتحوّلوا لنفس شكل [DxfModel] الموحّد. */
+    private fun load2DModelFile(uri: Uri, kind: FileKind) {
         switchTo2DMode()
         resetMeasurementState()
         showLoadingBar(getString(R.string.loading_file), 0)
-        // نفس المنطق بالظبط: نحرر موديل الـ STL القديم (لو موجود) قبل ما نفتح DXF جديد،
-        // عشان الاتنين ميفضلوش قاعدين في الذاكرة مع بعض من غير داعي
+        // نفس المنطق بالظبط: نحرر موديل الـ STL القديم (لو موجود) قبل ما نفتح موديل
+        // ثنائي الأبعاد جديد، عشان الاتنين ميفضلوش قاعدين في الذاكرة مع بعض من غير داعي
         glViewerView.queueEvent { glViewerView.stlRenderer.clearModel() }
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val dxfModel = withContext(Dispatchers.IO) {
-                    DXFParser.parse(requireContext(), uri)
+                    if (kind == FileKind.AI) AIParser.parse(requireContext(), uri)
+                    else DXFParser.parse(requireContext(), uri)
                 }
 
                 if (!isAdded || view == null) return@launch
@@ -979,24 +978,6 @@ class ViewerFragment : Fragment() {
                 hideLoadingBar()
 
                 dxf2DView.setModel(dxfModel)
-                dxfGapCard.visibility = View.GONE
-                cbHighlightDxfGaps.isChecked = false
-
-                // فحص الفجوات الكبيرة نسبيًا شغال بصمت في الخلفية (نفس فلسفة فحص
-                // حواف الـ STL المفتوحة) — هدفه الوحيد إظهار/إخفاء تشيك بوكس الهايلايت
-                val requestedDxfModel = dxfModel
-                viewLifecycleOwner.lifecycleScope.launch {
-                    val gapReport = withContext(Dispatchers.Default) {
-                        DxfGapChecker.check(requestedDxfModel) { layer -> dxf2DView.isLayerVisible(layer) }
-                    }
-                    if (dxf2DView.currentModel !== requestedDxfModel || !is2DMode) return@launch // اتغيّر الملف من تحتنا
-                    if (gapReport.hasSignificantGaps) {
-                        dxfGapCard.visibility = View.VISIBLE
-                        dxf2DView.gapHighlightSegments = gapReport.gapSegments
-                    } else {
-                        dxfGapCard.visibility = View.GONE
-                    }
-                }
 
                 // زرار الطبقات بيتفعّل بس لو الملف فيه أكتر من طبقة واحدة — لو طبقة
                 // واحدة بس مفيش داعي نوريه أصلًا (زي ما طلب في البند 1)
@@ -1062,7 +1043,7 @@ class ViewerFragment : Fragment() {
 
         // "الدوران التلقائي" مالوش معنى في عرض 2D — بيتحول لزرار "طبقات" بدل ما يختفي،
         // وحالة الظهور النهائية (لو الملف فيه طبقة واحدة بس) بتتحدد بعد ما الملف يتحمّل
-        // في loadDxfFile عن طريق updateLayersButtonVisibility()
+        // في load2DModelFile عن طريق updateLayersButtonVisibility()
         btnAutoRotate.isChecked = false
         btnAutoRotate.setImageResource(R.drawable.ic_layers_panel)
         btnAutoRotate.contentDescription = getString(R.string.layers_tool)
@@ -1084,8 +1065,6 @@ class ViewerFragment : Fragment() {
         dxf2DView.measureModeOn = false
         dxf2DView.visibility = View.GONE
         dxf2DView.clear()
-        dxfGapCard.visibility = View.GONE
-        cbHighlightDxfGaps.isChecked = false
         glViewerView.visibility = View.VISIBLE
         glViewerView.onResume()
 
@@ -1111,7 +1090,7 @@ class ViewerFragment : Fragment() {
 
     /** بيعرض قائمة (Dialog) بكل طبقات ملف الـ DXF الحالي، وبجنب كل طبقة Checkbox
      * لإخفاء/إظهار عناصرها في العرض. الزرار اللي بيستدعي الدالة دي مش بيبان أصلًا
-     * لو الملف فيه طبقة واحدة بس (اتحدد في loadDxfFile). */
+     * لو الملف فيه طبقة واحدة بس (اتحدد في load2DModelFile). */
     private fun showDxfLayersDialog() {
         val ctx = requireContext()
         val layers = dxf2DView.getLayers()
@@ -1345,33 +1324,13 @@ class ViewerFragment : Fragment() {
         }.start()
     }
 
-    /** إعادة الكاميرا للوضع الافتراضي — بحركة ناعمة "سلو موشن" مع لمسة ارتداد
-     * بسيطة في النهاية (Overshoot) بدل القفزة المفاجئة، عشان تحس إنها "دلوعة"
-     * شوية مش جافة. بترجع لنفس زاوية الدخول بالظبط لكن بالزووم الطبيعي (1،
-     * مش 0.85 بتاعة الدخول) — فرق مقصود، شوف الشرح في STLRenderer.uploadModelToGPU. */
     private fun resetCamera() {
         val r = glViewerView.stlRenderer
         if (r.autoRotate) { r.autoRotate = false; btnAutoRotate.isChecked = false }
-
-        val startRotX = r.rotationX; val startRotY = r.rotationY
-        val startScale = r.scaleFactor; val startPanX = r.panX; val startPanY = r.panY
-        val targetRotX = 25f; val targetRotY = 35f
-        val targetScale = 1f; val targetPanX = 0f; val targetPanY = 0f
-
+        r.rotationX = -25f; r.rotationY = -35f
+        r.scaleFactor = 1f; r.panX = 0f; r.panY = 0f
         r.pivotOverride = null
-        android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 1550
-            interpolator = android.view.animation.OvershootInterpolator(1.1f)
-            addUpdateListener { a ->
-                val t = a.animatedValue as Float
-                r.rotationX  = startRotX  + (targetRotX  - startRotX)  * t
-                r.rotationY  = startRotY  + (targetRotY  - startRotY)  * t
-                r.scaleFactor = (startScale + (targetScale - startScale) * t).coerceAtLeast(0.05f)
-                r.panX = startPanX + (targetPanX - startPanX) * t
-                r.panY = startPanY + (targetPanY - startPanY) * t
-                glViewerView.queueEvent { r.updateProjection() }
-            }
-        }.start()
+        glViewerView.queueEvent { r.updateProjection() }
     }
 
     // ══ قائمة الخامات — كرات زجاجية ══
@@ -1462,7 +1421,7 @@ class ViewerFragment : Fragment() {
                         p.maskFilter = android.graphics.BlurMaskFilter(r*0.5f,
                             android.graphics.BlurMaskFilter.Blur.NORMAL)
                         p.color = (glowColor and 0x00FFFFFF) or 0x44000000
-                        c.drawCircle(cx, cy+4f, r*0.100f, p)
+                        c.drawCircle(cx, cy+4f, r*0.85f, p)
                         p.maskFilter = null
                     }
 
@@ -1716,36 +1675,5 @@ class ViewerFragment : Fragment() {
             getString(R.string.inspection_height_label, "%.2f".format(report.height), u)
         inspectionCard.visibility  = View.VISIBLE
         measurementCard.visibility = View.GONE
-        // ✅ التشيك بوكس ظاهر دايمًا فور فتح كارت الفحص — بغض النظر لو الموديل
-        // فيه حواف مفتوحة ولا لأ. الفحص نفسه (تحت) بيحدد بس هل في بيانات فعلية
-        // نرسمها لو المستخدم فعّله، مش هل الزرار نفسه يبان أو يختفي.
-        cbHighlightOpenEdges.visibility = View.VISIBLE
-
-        // شاشة الفحص مفيهاش أي نص "جاري الفحص/المعالجة" — دورها بس عرض الأبعاد
-        // فورًا (زي ما هو فوق). الفحص عن الحواف المفتوحة بيشتغل بصمت في الخلفية
-        // (Dispatchers.Default) وهدفه تجهيز بيانات الـ Highlight لو المستخدم
-        // فعّل التشيك بوكس — مفيش أي معالجة أو تبسيط للموديل هنا (ده حصريًا
-        // شاشة السلايزر).
-        val requestedModel = model
-        viewLifecycleOwner.lifecycleScope.launch {
-            // ⚠️ حماية دفاعية: أي استثناء غير متوقع هنا (حتى لو نادر جدًا) ما ينفعش
-            // يسيب حالة الفحص غير واضحة من غير أي أثر — بنسجّله في Logcat
-            // (تاج "MeshIntegrityChecker") عشان لو تكرر نقدر نشخّصه بالظبط.
-            val integrity = try {
-                withContext(Dispatchers.Default) { MeshIntegrityChecker.check(requestedModel) }
-            } catch (e: Throwable) {
-                android.util.Log.e("MeshIntegrityChecker", "فشل فحص الحواف المفتوحة", e)
-                null
-            }
-            if (integrity == null) return@launch
-            // لو المستخدم فتح ملف تاني أو قفل الكارت وهو الفحص شغال، متأثرش على حاجة
-            if (currentModel !== requestedModel || inspectionCard.visibility != View.VISIBLE) return@launch
-
-            // لو مفيش حواف مفتوحة أصلاً، مفيش بيانات نرسمها — التشيك بوكس نفسه
-            // بيفضل ظاهر ومتاح (المستخدم ممكن يسيبه مفعّل، مجرد مالوش أي تأثير بصري)
-            val hasOpenEdges = integrity.openEdgeVertices.isNotEmpty()
-            glViewerView.stlRenderer.openEdgeHighlightVertices = if (hasOpenEdges) integrity.openEdgeVertices else null
-            glViewerView.requestRender()
-        }
     }
 }
