@@ -82,7 +82,7 @@
 <string name="settings_quality_high_full">🔥 High (all triangles)</string>
 <string name="settings_quality_medium_full">⚡ Medium (faster)</string>
 <string name="settings_quality_low_full">💨 Low (for weaker devices)</string>
-<string name="settings_sound_anim_header">🎵 Sound & Animation</string>
+<string name="settings_sound_anim_header">🎵 Sound &amp; Animation</string>
 <string name="slicer_header">Slicer</string>
 <string name="slicer_wip">Under development 🚧</string>
 <string name="slicer_wip_desc">Open an STL file from the Viewer first\nSlicing features coming soon</string>
@@ -119,7 +119,7 @@
 <string name="large_file_btn_continue">Continue</string>
 <string name="large_file_btn_back">Back</string>
 <string name="large_file_confirm_title">Confirm Loading</string>
-<string name="large_file_simplify_message">OK. To keep things running smoothly, the model\'s resolution will be automatically simplified during display — the overall shape and dimensions stay exactly the same, only some very fine detail may be slightly reduced. Continue?</string>
+<string name="large_file_simplify_message">OK. To keep things running smoothly, the model\'s resolution will be automatically simplified during display — the overall shape and dimensions stay e[...]</string>
 <string name="large_file_confirm_message_generic">OK, would you like to continue loading the file?</string>
 <string name="large_file_btn_agree">Agree</string>
 <string name="large_file_btn_cancel">Cancel</string>
@@ -154,7 +154,7 @@
 <string name="error_stl_invalid_value">Invalid value in file at: %1$s</string>
 <string name="error_stl_ascii_no_triangles">No valid triangles found in the ASCII STL file</string>
 <string name="dialog_permission_title">🔐 File Access Permission</string>
-<string name="dialog_permission_message">To display STL and DXF files from all folders on your device, the app needs \"All files access\" permission.\n\nThe settings page will open — enable the permission then return to the app.</string>
+<string name="dialog_permission_message">To display STL and DXF files from all folders on your device, the app needs "All files access" permission.\n\nThe settings page will open — enable the[...]</string>
 <string name="dialog_open_settings">Open Settings</string>
 <string name="dialog_later">Later</string>
 <string name="toast_waiting_second_point">Waiting for second measurement point</string>
