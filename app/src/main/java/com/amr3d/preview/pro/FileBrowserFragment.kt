@@ -264,12 +264,13 @@ class FileRowAdapter(
             val ext = file.extension.uppercase()
             val kb = file.length() / 1024
             val size = if (kb >= 1024) "${"%.1f".format(kb / 1024f)} MB" else "$kb KB"
-            if (ext == "DXF" || ext == "AI") {
-                icon.text = "📐"
-                icon.setBackgroundResource(R.drawable.bg_file_icon_dxf)
-            } else {
+            if (ext == "STL" || ext == "OBJ" || ext == "GLB") {
                 icon.text = "🧊"
                 icon.setBackgroundResource(R.drawable.bg_file_icon_stl)
+            } else {
+                // DXF و AI الاتنين بيترسموا على نفس عارض الـ 2D بالظبط
+                icon.text = "📐"
+                icon.setBackgroundResource(R.drawable.bg_file_icon_dxf)
             }
             meta.text = ctx.getString(R.string.files_item_meta_format, ext, size)
         }

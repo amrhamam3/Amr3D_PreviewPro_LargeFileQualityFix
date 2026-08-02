@@ -66,6 +66,7 @@ Amr Hamam 3D © 2026</string>
     <string name="loading_done">Done ✓</string>
     <string name="dxf_mode">📐 DXF 2D Mode</string>
     <string name="stl_mode">🧊 STL 3D Mode</string>
+    <string name="toggle_dxf_view">Switch to DXF view</string>
 
     <string name="splash_touch_hint">TOUCH TO INTERACT</string>
     <string name="history_clear">🗑️ Clear</string>

@@ -584,6 +584,19 @@ class ViewerFragment : Fragment() {
         private const val DXF_LARGE_FILE_BYTES = 10L * 1024L * 1024L  // 10 ميجابايت
     }
 
+    /** أنواع الملفات المدعومة — DXF/AI بيترسموا كرسمة ثنائية الأبعاد (نفس مسار
+     * DXF بالظبط، الاتنين بيتحوّلوا لنفس شكل [DxfModel])، وأي حاجة تانية بترسم
+     * كموديل صلب ثلاثي الأبعاد (STL/OBJ/GLB بيتحوّلوا لنفس شكل [STLModel]). */
+    private enum class FileKind { STL, OBJ, GLB, DXF, AI }
+
+    private fun fileKindFromExtension(ext: String): FileKind = when (ext) {
+        "dxf" -> FileKind.DXF
+        "ai"  -> FileKind.AI
+        "obj" -> FileKind.OBJ
+        "glb" -> FileKind.GLB
+        else  -> FileKind.STL // افتراضي (زي السلوك القديم: أي امتداد غير معروف كان بيتعامل كـ STL)
+    }
+
     // ══ تحميل الملف — آمن حتى قبل onViewCreated ══
     fun loadFile(uri: Uri) {
         // إذا لم يكن الـ View جاهزاً بعد، نحفظ الـ URI ونحمّله لاحقاً
@@ -592,10 +605,7 @@ class ViewerFragment : Fragment() {
             return
         }
 
-        // ⚠️ "isStl" هنا معناها فعليًا "لازم يتحمّل كموديل 3D" — .ai بيرجّع DxfModel
-        // (زي .dxf بالظبط، شوف AIParser.kt) فلازم يتوجّه لنفس مسار الـ 2D، مش الـ 3D
-        val ext = getFileExtension(uri)
-        val isStl = ext != "dxf" && ext != "ai"
+        val kind = fileKindFromExtension(getFileExtension(uri))
 
         // بنحسب حجم الملف بسرعة (من غير ما نفتحه كامل) قبل أي قراءة فعلية —
         // عشان نقدر نعرض رسالة التنبيه للملفات الكبيرة (البند 1.1) قبل ما نبدأ
@@ -603,11 +613,11 @@ class ViewerFragment : Fragment() {
             val sizeBytes = withContext(Dispatchers.IO) { quickFileSize(uri) }
             if (!isAdded || view == null) return@launch
 
-            val threshold = if (isStl) STL_LARGE_FILE_BYTES else DXF_LARGE_FILE_BYTES
+            val threshold = if (kind == FileKind.DXF || kind == FileKind.AI) DXF_LARGE_FILE_BYTES else STL_LARGE_FILE_BYTES
             if (sizeBytes >= 0 && sizeBytes >= threshold) {
-                showLargeFileWarning(uri, isStl, sizeBytes)
+                showLargeFileWarning(uri, kind, sizeBytes)
             } else {
-                proceedToLoad(uri, isStl, forceSimplify = false)
+                proceedToLoad(uri, kind, forceSimplify = false)
             }
         }
     }
@@ -645,8 +655,9 @@ class ViewerFragment : Fragment() {
         }
     }
 
-    private fun proceedToLoad(uri: Uri, isStl: Boolean, forceSimplify: Boolean) {
-        if (isStl) loadStlFile(uri, forceSimplify) else loadDxfFile(uri)
+    private fun proceedToLoad(uri: Uri, kind: FileKind, forceSimplify: Boolean) {
+        if (kind == FileKind.DXF || kind == FileKind.AI) load2DModelFile(uri, kind)
+        else load3DModelFile(uri, kind, forceSimplify)
     }
 
     /** نافذة تأكيد بشكل موحّد مع هوية التطبيق (خلفية داكنة + إطار خارجي، زي نافذة
@@ -729,7 +740,7 @@ class ViewerFragment : Fragment() {
     }
 
     /** رسالة التنبيه الأولى: الملف كبير، استمرار/رجوع (البند 1.1 - خطوة 1) */
-    private fun showLargeFileWarning(uri: Uri, isStl: Boolean, sizeBytes: Long) {
+    private fun showLargeFileWarning(uri: Uri, kind: FileKind, sizeBytes: Long) {
         if (!isAdded) return
         val sizeMb = sizeBytes / (1024.0 * 1024.0)
         val sizeText = String.format(Locale.US, "%.1f", sizeMb)
@@ -738,17 +749,21 @@ class ViewerFragment : Fragment() {
             message = getString(R.string.large_file_warning_message, sizeText),
             positiveText = getString(R.string.large_file_btn_continue),
             negativeText = getString(R.string.large_file_btn_back),
-            onPositive = { showLargeFileConfirm(uri, isStl) },
+            onPositive = { showLargeFileConfirm(uri, kind) },
             // "رجوع" → إلغاء التحميل تمامًا، رجوع لحالة "لا يوجد ملف محمّل" (ما بيحصلش أي تغيير)
             onNegative = {}
         )
     }
 
-    /** رسالة التأكيد التانية: توضيح التبسيط (لـ STL) أو تأكيد عام (لـ DXF) — البند 1.1 خطوة 2 */
-    private fun showLargeFileConfirm(uri: Uri, isStl: Boolean) {
+    /** رسالة التأكيد التانية: توضيح التبسيط (لأي موديل صلب ثلاثي الأبعاد: STL/OBJ/GLB)
+     * أو تأكيد عام (لـ DXF) — البند 1.1 خطوة 2 */
+    private fun showLargeFileConfirm(uri: Uri, kind: FileKind) {
         if (!isAdded) return
-        // DXF ملف ثنائي الأبعاد بيتفهرس بطريقة مختلفة تمامًا ومفيهوش تبسيط (البند 1.2 خاص بـ STL بس)
-        val message = if (isStl) getString(R.string.large_file_simplify_message)
+        // DXF/AI ملفات ثنائية الأبعاد بتتفهرس بطريقة مختلفة تمامًا ومفيهاش تبسيط —
+        // أي صيغة تانية (STL/OBJ/GLB) بتتحوّل لنفس شكل STLModel الموحّد فالتبسيط
+        // بيتطبق عليها كلها بنفس الطريقة بالظبط
+        val isSolid3D = kind != FileKind.DXF && kind != FileKind.AI
+        val message = if (isSolid3D) getString(R.string.large_file_simplify_message)
                       else getString(R.string.large_file_confirm_message_generic)
         showStyledConfirmDialog(
             title = getString(R.string.large_file_confirm_title),
@@ -843,7 +858,11 @@ class ViewerFragment : Fragment() {
         glViewerView.queueEvent { glViewerView.stlRenderer.clearMeasurementPoints() }
     }
 
-    private fun loadStlFile(uri: Uri, forceSimplify: Boolean = false) {
+    /** مسار تحميل أي موديل صلب ثلاثي الأبعاد (STL/OBJ/GLB) — الثلاثة بيتحوّلوا
+     * لنفس شكل [STLModel] الموحّد فبيمشوا في نفس المسار بالظبط بعد القراءة (نفس
+     * التبسيط، نفس تصحيح المحور، نفس أدوات القياس/الفحص) — الفرق الوحيد هو قارئ
+     * الملف المستخدم في البداية. */
+    private fun load3DModelFile(uri: Uri, kind: FileKind, forceSimplify: Boolean = false) {
         switchTo3DMode()
         resetMeasurementState()
         modelStatsText.visibility = View.GONE
@@ -852,27 +871,23 @@ class ViewerFragment : Fragment() {
         // مش بس عند تبديل الوضع، عشان حتى تحميل ملف واحد كبير لوحده منوصلش لحد الذاكرة
         // بسرعة بسبب موديل سابق لسه قاعد. لازم يتنفذ على GL thread عشان بيلمس VBOs.
         glViewerView.queueEvent { glViewerView.stlRenderer.clearModel() }
-        dxf2DView.clear() // مفيش داعي نسيب رسمة DXF قديمة قاعدة في الذاكرة ونحن بنفتح STL
+        dxf2DView.clear() // مفيش داعي نسيب رسمة DXF قديمة قاعدة في الذاكرة ونحن بنفتح موديل صلب
         dxfGapCard.visibility = View.GONE
         cbHighlightDxfGaps.isChecked = false
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val ext = getFileExtension(uri)
-                val onProgress: (Int) -> Unit = { percent ->
+                val progressCallback: (Int) -> Unit = { percent ->
                     // بيتنادى من خيط IO — لازم ننقل التحديث للـ main thread
                     requireActivity().runOnUiThread {
                         updateLoadingBar(getString(R.string.loading_analyzing), percent)
                     }
                 }
-                // ⚠️ التوزيع حسب امتداد الملف — الثلاثة قارئين (STL/OBJ/GLB) بيرجّعوا
-                // نفس شكل STLModel المسطّح بالظبط، فباقي التطبيق (الرندرر، أدوات
-                // القياس، تقرير الفحص، التبسيط...) شغال من غير أي تعديل تاني
                 val model = withContext(Dispatchers.IO) {
-                    when (ext) {
-                        "obj" -> OBJParser.parse(requireContext(), uri, onProgress)
-                        "glb" -> GLBParser.parse(requireContext(), uri, onProgress)
-                        else  -> STLParser.parse(requireContext(), uri, onProgress)
+                    when (kind) {
+                        FileKind.OBJ -> OBJParser.parse(requireContext(), uri, progressCallback)
+                        FileKind.GLB -> GLBParser.parse(requireContext(), uri, progressCallback)
+                        else -> STLParser.parse(requireContext(), uri, progressCallback)
                     }
                 }
 
@@ -907,7 +922,7 @@ class ViewerFragment : Fragment() {
                 // applyAxisConvention بتشتغل على simplifiedModel (الموديل بعد التبسيط،
                 // لو حصل) عشان أدوات القياس/الفحص تتعامل مع نفس البيانات المبسّطة
                 // المعروضة فعليًا على الشاشة، مش النسخة الخام الأصلية.
-                val correctedModel = glViewerView.stlRenderer.applyAxisConvention(simplifiedModel, sourceIsAlwaysYUp = (ext == "glb"))
+                val correctedModel = glViewerView.stlRenderer.applyAxisConvention(simplifiedModel, sourceIsAlwaysYUp = (kind == FileKind.GLB))
                 currentModel = correctedModel
 
                 // رفع الموديل على GL thread
@@ -958,26 +973,21 @@ class ViewerFragment : Fragment() {
         }
     }
 
-    /** مسار تحميل ملفات DXF — شاشة عرض 2D حقيقية منفصلة تماماً عن محرك الـ 3D */
-    private fun loadDxfFile(uri: Uri) {
+    /** مسار تحميل أي موديل ثنائي الأبعاد (DXF/AI) — شاشة عرض 2D حقيقية منفصلة
+     * تماماً عن محرك الـ 3D. الاتنين بيتحوّلوا لنفس شكل [DxfModel] الموحّد. */
+    private fun load2DModelFile(uri: Uri, kind: FileKind) {
         switchTo2DMode()
         resetMeasurementState()
         showLoadingBar(getString(R.string.loading_file), 0)
-        // نفس المنطق بالظبط: نحرر موديل الـ STL القديم (لو موجود) قبل ما نفتح DXF جديد،
-        // عشان الاتنين ميفضلوش قاعدين في الذاكرة مع بعض من غير داعي
+        // نفس المنطق بالظبط: نحرر موديل الـ STL القديم (لو موجود) قبل ما نفتح موديل
+        // ثنائي الأبعاد جديد، عشان الاتنين ميفضلوش قاعدين في الذاكرة مع بعض من غير داعي
         glViewerView.queueEvent { glViewerView.stlRenderer.clearModel() }
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val dxfModel = withContext(Dispatchers.IO) {
-                    // .ai بيرجّع نفس شكل DxfModel بالظبط (شوف تعليق AIParser.kt) —
-                    // فباقي المسار كله (dxf2DView، فحص الفجوات، القياس...) شغال
-                    // من غير أي تعديل تاني، بالظبط زي إضافة OBJ/GLB لمسار STL
-                    if (getFileExtension(uri) == "ai") {
-                        AIParser.parse(requireContext(), uri)
-                    } else {
-                        DXFParser.parse(requireContext(), uri)
-                    }
+                    if (kind == FileKind.AI) AIParser.parse(requireContext(), uri)
+                    else DXFParser.parse(requireContext(), uri)
                 }
 
                 if (!isAdded || view == null) return@launch
@@ -1072,7 +1082,7 @@ class ViewerFragment : Fragment() {
 
         // "الدوران التلقائي" مالوش معنى في عرض 2D — بيتحول لزرار "طبقات" بدل ما يختفي،
         // وحالة الظهور النهائية (لو الملف فيه طبقة واحدة بس) بتتحدد بعد ما الملف يتحمّل
-        // في loadDxfFile عن طريق updateLayersButtonVisibility()
+        // في load2DModelFile عن طريق updateLayersButtonVisibility()
         btnAutoRotate.isChecked = false
         btnAutoRotate.setImageResource(R.drawable.ic_layers_panel)
         btnAutoRotate.contentDescription = getString(R.string.layers_tool)
@@ -1121,7 +1131,7 @@ class ViewerFragment : Fragment() {
 
     /** بيعرض قائمة (Dialog) بكل طبقات ملف الـ DXF الحالي، وبجنب كل طبقة Checkbox
      * لإخفاء/إظهار عناصرها في العرض. الزرار اللي بيستدعي الدالة دي مش بيبان أصلًا
-     * لو الملف فيه طبقة واحدة بس (اتحدد في loadDxfFile). */
+     * لو الملف فيه طبقة واحدة بس (اتحدد في load2DModelFile). */
     private fun showDxfLayersDialog() {
         val ctx = requireContext()
         val layers = dxf2DView.getLayers()
@@ -1370,7 +1380,7 @@ class ViewerFragment : Fragment() {
 
         r.pivotOverride = null
         android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 1550
+            duration = 950
             interpolator = android.view.animation.OvershootInterpolator(1.1f)
             addUpdateListener { a ->
                 val t = a.animatedValue as Float
@@ -1472,7 +1482,7 @@ class ViewerFragment : Fragment() {
                         p.maskFilter = android.graphics.BlurMaskFilter(r*0.5f,
                             android.graphics.BlurMaskFilter.Blur.NORMAL)
                         p.color = (glowColor and 0x00FFFFFF) or 0x44000000
-                        c.drawCircle(cx, cy+4f, r*0.100f, p)
+                        c.drawCircle(cx, cy+4f, r*0.85f, p)
                         p.maskFilter = null
                     }
 
