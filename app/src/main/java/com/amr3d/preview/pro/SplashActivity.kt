@@ -69,7 +69,7 @@ class SplashActivity : AppCompatActivity() {
         // بيتخطى خالص زي الأول)، بس لمدة أقصر وبدون شريط تحميل حقيقي (مجرد منظر تمهيدي)
         if (intent?.action == Intent.ACTION_VIEW && intent?.data != null) {
             externalFileUri = intent.data
-            isExternalStlFile = getFileExtension(externalFileUri) != "dxf"
+            isExternalStlFile = getFileExtension(externalFileUri) !in setOf("dxf", "ai")
             splashDuration = 2400L // كافية إن شارة النوع تبان بوضوح قبل ما تختفي، وتفضل "قصيرة" فعلاً
         }
 

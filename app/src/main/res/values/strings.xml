@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Amr3D Preview Pro</string>
     <string name="open_file">📂</string>
-    <string name="no_file_loaded">لا يوجد ملف محمّل\nاضغط 📂 لفتح ملف STL أو DXF</string>
+    <string name="no_file_loaded">لا يوجد ملف محمّل\nاضغط 📂 لفتح ملف STL أو OBJ أو GLB أو DXF أو AI</string>
     <string name="measure_tool">📐 قياس</string>
     <string name="inspect_tool">🔍</string>
     <string name="reset_view">↺</string>
