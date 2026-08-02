@@ -770,7 +770,7 @@ class ViewerFragment : Fragment() {
             message = message,
             positiveText = getString(R.string.large_file_btn_agree),
             negativeText = getString(R.string.large_file_btn_cancel),
-            onPositive = { proceedToLoad(uri, isStl, forceSimplify = isStl) },
+            onPositive = { proceedToLoad(uri, kind, forceSimplify = isSolid3D) },
             // "إلغاء" → إلغاء التحميل، رجوع لحالة "لا يوجد ملف محمّل"
             onNegative = {}
         )
