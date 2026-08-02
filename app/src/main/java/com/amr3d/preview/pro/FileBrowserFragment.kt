@@ -23,7 +23,7 @@ class FileBrowserFragment : Fragment() {
 
     private val pathStack = ArrayDeque<File>()
     private var currentPath = Environment.getExternalStorageDirectory()
-    private val supportedExtensions = setOf("stl", "dxf", "obj", "glb")
+    private val supportedExtensions = setOf("stl", "dxf", "obj", "glb", "ai")
     private var loadJob: Job? = null
     /** كل عناصر المجلد الحالي (قبل أي فلترة بحث) — محتاجينها عشان البحث يفلتر عليها من غير إعادة تحميل من القرص */
     private var currentEntries: List<File> = emptyList()
@@ -264,7 +264,7 @@ class FileRowAdapter(
             val ext = file.extension.uppercase()
             val kb = file.length() / 1024
             val size = if (kb >= 1024) "${"%.1f".format(kb / 1024f)} MB" else "$kb KB"
-            if (ext == "DXF") {
+            if (ext == "DXF" || ext == "AI") {
                 icon.text = "📐"
                 icon.setBackgroundResource(R.drawable.bg_file_icon_dxf)
             } else {

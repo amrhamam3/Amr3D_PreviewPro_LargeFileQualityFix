@@ -592,7 +592,10 @@ class ViewerFragment : Fragment() {
             return
         }
 
-        val isStl = getFileExtension(uri) != "dxf"
+        // ⚠️ "isStl" هنا معناها فعليًا "لازم يتحمّل كموديل 3D" — .ai بيرجّع DxfModel
+        // (زي .dxf بالظبط، شوف AIParser.kt) فلازم يتوجّه لنفس مسار الـ 2D، مش الـ 3D
+        val ext = getFileExtension(uri)
+        val isStl = ext != "dxf" && ext != "ai"
 
         // بنحسب حجم الملف بسرعة (من غير ما نفتحه كامل) قبل أي قراءة فعلية —
         // عشان نقدر نعرض رسالة التنبيه للملفات الكبيرة (البند 1.1) قبل ما نبدأ
@@ -967,7 +970,14 @@ class ViewerFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val dxfModel = withContext(Dispatchers.IO) {
-                    DXFParser.parse(requireContext(), uri)
+                    // .ai بيرجّع نفس شكل DxfModel بالظبط (شوف تعليق AIParser.kt) —
+                    // فباقي المسار كله (dxf2DView، فحص الفجوات، القياس...) شغال
+                    // من غير أي تعديل تاني، بالظبط زي إضافة OBJ/GLB لمسار STL
+                    if (getFileExtension(uri) == "ai") {
+                        AIParser.parse(requireContext(), uri)
+                    } else {
+                        DXFParser.parse(requireContext(), uri)
+                    }
                 }
 
                 if (!isAdded || view == null) return@launch

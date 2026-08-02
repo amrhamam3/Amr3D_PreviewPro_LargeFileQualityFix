@@ -166,6 +166,9 @@ Amr Hamam 3D © 2026</string>
     <string name="error_glb_not_glb">هذا الملف ليس بصيغة GLB صالحة</string>
     <string name="error_glb_no_json">ملف GLB لا يحتوي على بيانات JSON صالحة</string>
     <string name="error_glb_no_geometry">ملف GLB لا يحتوي على أي هندسة (geometry) قابلة للعرض</string>
+    <string name="error_ai_too_large">ملف AI كبير جدًا</string>
+    <string name="error_ai_read_failed">تعذر قراءة ملف AI</string>
+    <string name="error_ai_no_geometry">ملف AI لا يحتوي على أي رسومات قابلة للعرض</string>
     <string name="error_stl_corrupt_triangle">ملف STL تالف - لا يمكن قراءة المثلث رقم %1$d</string>
     <string name="error_stl_invalid_value">قيمة غير صالحة في الملف عند: %1$s</string>
     <string name="error_stl_ascii_no_triangles">لم يتم العثور على أي مثلثات صالحة في ملف الـ ASCII STL</string>

@@ -162,6 +162,9 @@ Amr Hamam 3D © 2026</string>
     <string name="error_glb_not_glb">This file is not a valid GLB file</string>
     <string name="error_glb_no_json">GLB file contains no valid JSON data</string>
     <string name="error_glb_no_geometry">GLB file contains no displayable geometry</string>
+    <string name="error_ai_too_large">AI file is too large</string>
+    <string name="error_ai_read_failed">Could not read the AI file</string>
+    <string name="error_ai_no_geometry">AI file contains no displayable artwork</string>
     <string name="error_stl_corrupt_triangle">Corrupted STL file - cannot read triangle #%1$d</string>
     <string name="error_stl_invalid_value">Invalid value in file at: %1$s</string>
     <string name="error_stl_ascii_no_triangles">No valid triangles found in the ASCII STL file</string>
