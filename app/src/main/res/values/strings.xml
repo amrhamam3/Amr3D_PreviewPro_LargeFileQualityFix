@@ -218,6 +218,7 @@ Amr Hamam 3D © 2026</string>
     <string name="section_background">الخلفية</string>
     <string name="files_search_hint">بحث في الملفات...</string>
     <string name="files_folder_item_count">%1$d عنصر</string>
+    <string name="files_filter_match_count">%1$d ملف مطابق</string>
     <string name="files_item_meta_format">%1$s  ·  %2$s</string>
     <string name="settings_zup">المحور الرأسي: Z (3ds Max/CAD)</string>
     <string name="settings_zup_sub">شغّله لملفات مصممة بمحور Z لأعلى — قفّله لو الملف Y لأعلى أصلاً</string>

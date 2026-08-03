@@ -215,6 +215,7 @@ Amr Hamam 3D © 2026</string>
     <string name="section_background">Fondo</string>
     <string name="files_search_hint">Buscar archivos...</string>
     <string name="files_folder_item_count">%1$d elementos</string>
+    <string name="files_filter_match_count">%1$d archivos coincidentes</string>
     <string name="files_item_meta_format">%1$s  ·  %2$s</string>
     <string name="settings_zup">Eje vertical: Z (3ds Max/CAD)</string>
     <string name="settings_zup_sub">Actívalo para archivos Z-up — desactívalo si el archivo ya es Y-up</string>

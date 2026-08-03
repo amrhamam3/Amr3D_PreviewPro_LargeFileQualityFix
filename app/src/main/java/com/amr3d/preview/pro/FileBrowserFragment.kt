@@ -20,13 +20,24 @@ class FileBrowserFragment : Fragment() {
     private lateinit var btnBack: ImageButton
     private lateinit var progressBar: ProgressBar
     private lateinit var searchBox: EditText
+    private lateinit var formatBadge: TextView
+    private lateinit var btnToggleFormatFilter: Button
+    private lateinit var formatFilterPanel: LinearLayout
+    private lateinit var filterMatchCount: TextView
+    private lateinit var cbFilterStl: CheckBox
+    private lateinit var cbFilterObj: CheckBox
+    private lateinit var cbFilterGlb: CheckBox
+    private lateinit var cbFilterDxf: CheckBox
+    private lateinit var cbFilterAi: CheckBox
 
     private val pathStack = ArrayDeque<File>()
     private var currentPath = Environment.getExternalStorageDirectory()
     private val supportedExtensions = setOf("stl", "dxf", "obj", "glb", "ai")
     private var loadJob: Job? = null
-    /** كل عناصر المجلد الحالي (قبل أي فلترة بحث) — محتاجينها عشان البحث يفلتر عليها من غير إعادة تحميل من القرص */
+    /** كل عناصر المجلد الحالي (قبل أي فلترة بحث/صيغة) — محتاجينها عشان الفلترة
+     * تشتغل من غير إعادة تحميل من القرص في كل مرة */
     private var currentEntries: List<File> = emptyList()
+    private var filterPanelOpen = false
 
     interface OnFileSelectedListener { fun onFileSelected(file: File) }
     var fileSelectedListener: OnFileSelectedListener? = null
@@ -41,23 +52,107 @@ class FileBrowserFragment : Fragment() {
         btnBack         = view.findViewById(R.id.btnBackDir)
         progressBar     = view.findViewById(R.id.browserProgress)
         searchBox       = view.findViewById(R.id.searchBox)
+        formatBadge     = view.findViewById(R.id.formatBadge)
+        btnToggleFormatFilter = view.findViewById(R.id.btnToggleFormatFilter)
+        formatFilterPanel     = view.findViewById(R.id.formatFilterPanel)
+        filterMatchCount = view.findViewById(R.id.filterMatchCount)
+        cbFilterStl = view.findViewById(R.id.cbFilterStl)
+        cbFilterObj = view.findViewById(R.id.cbFilterObj)
+        cbFilterGlb = view.findViewById(R.id.cbFilterGlb)
+        cbFilterDxf = view.findViewById(R.id.cbFilterDxf)
+        cbFilterAi  = view.findViewById(R.id.cbFilterAi)
+
+        loadFilterPrefs()
+        updateFormatBadge()
+
         btnBack.setOnClickListener { navigateUp() }
+
+        // زرار الطي/الإظهار — نفس سلوك btnToggleToolbars في العارض الأساسي بالظبط
+        btnToggleFormatFilter.setOnClickListener {
+            filterPanelOpen = !filterPanelOpen
+            formatFilterPanel.visibility = if (filterPanelOpen) View.VISIBLE else View.GONE
+            btnToggleFormatFilter.animate().rotation(if (filterPanelOpen) 180f else 0f).setDuration(200).start()
+        }
+
+        val filterListener = { _: android.widget.CompoundButton, _: Boolean ->
+            saveFilterPrefs()
+            updateFormatBadge()
+            applyFilters()
+        }
+        cbFilterStl.setOnCheckedChangeListener(filterListener)
+        cbFilterObj.setOnCheckedChangeListener(filterListener)
+        cbFilterGlb.setOnCheckedChangeListener(filterListener)
+        cbFilterDxf.setOnCheckedChangeListener(filterListener)
+        cbFilterAi.setOnCheckedChangeListener(filterListener)
+
+        view.findViewById<TextView>(R.id.btnFilterSelectAll).setOnClickListener {
+            listOf(cbFilterStl, cbFilterObj, cbFilterGlb, cbFilterDxf, cbFilterAi).forEach { it.isChecked = true }
+        }
+        view.findViewById<TextView>(R.id.btnFilterClearAll).setOnClickListener {
+            listOf(cbFilterStl, cbFilterObj, cbFilterGlb, cbFilterDxf, cbFilterAi).forEach { it.isChecked = false }
+        }
+
         searchBox.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
-                applySearchFilter(s?.toString().orEmpty())
+                applyFilters()
             }
         })
         checkPermissionAndLoad()
         return view
     }
 
-    /** بيفلتر القائمة المعروضة حسب اسم الملف/المجلد من غير أي قراءة جديدة من القرص */
-    private fun applySearchFilter(query: String) {
+    /** الصيغ المفعّلة حاليًا حسب حالة التشيك بوكسات */
+    private fun activeExtensions(): Set<String> {
+        val set = HashSet<String>()
+        if (cbFilterStl.isChecked) set.add("stl")
+        if (cbFilterObj.isChecked) set.add("obj")
+        if (cbFilterGlb.isChecked) set.add("glb")
+        if (cbFilterDxf.isChecked) set.add("dxf")
+        if (cbFilterAi.isChecked) set.add("ai")
+        return set
+    }
+
+    private fun filterPrefs() = requireContext().getSharedPreferences("amr3d_prefs", 0)
+
+    /** حفظ اختيار الفلترة عشان يفضل زي ما هو المرة الجاية — مش محتاج تعيد ضبطه كل مرة */
+    private fun saveFilterPrefs() {
+        filterPrefs().edit()
+            .putStringSet("file_filter_extensions", activeExtensions())
+            .apply()
+    }
+
+    private fun loadFilterPrefs() {
+        val saved = filterPrefs().getStringSet("file_filter_extensions", null) ?: supportedExtensions
+        cbFilterStl.isChecked = "stl" in saved
+        cbFilterObj.isChecked = "obj" in saved
+        cbFilterGlb.isChecked = "glb" in saved
+        cbFilterDxf.isChecked = "dxf" in saved
+        cbFilterAi.isChecked  = "ai"  in saved
+    }
+
+    /** بادچ صغير أعلى الشاشة بيعرض ملخص الصيغ المفعّلة حاليًا */
+    private fun updateFormatBadge() {
+        val active = activeExtensions()
+        formatBadge.text = when {
+            active.size == supportedExtensions.size -> "🧊📐 الكل"
+            active.isEmpty() -> "⚠️ لا شيء"
+            else -> active.sorted().joinToString(" · ") { it.uppercase() }
+        }
+    }
+
+    /** بيفلتر القائمة المعروضة حسب الصيغ المفعّلة + نص البحث مع بعض، من غير أي قراءة جديدة من القرص */
+    private fun applyFilters() {
         if (!isAdded) return
-        val filtered = if (query.isBlank()) currentEntries
-            else currentEntries.filter { it.name.contains(query, ignoreCase = true) }
+        val query = searchBox.text?.toString().orEmpty()
+        val active = activeExtensions()
+        val filtered = currentEntries.filter { f ->
+            val extOk = f.isDirectory || f.extension.lowercase() in active
+            val queryOk = query.isBlank() || f.name.contains(query, ignoreCase = true)
+            extOk && queryOk
+        }
+        filterMatchCount.text = getString(R.string.files_filter_match_count, filtered.count { it.isFile })
         listView.adapter = FileRowAdapter(requireContext(), filtered)
         listView.setOnItemClickListener { _, _, pos, _ ->
             val file = filtered[pos]
@@ -189,19 +284,7 @@ class FileBrowserFragment : Fragment() {
                 }
 
                 if (searchBox.text.isNotEmpty()) searchBox.setText("")
-                listView.adapter = FileRowAdapter(requireContext(), entries)
-
-                listView.setOnItemClickListener { _, _, pos, _ ->
-                    val file = entries[pos]
-                    if (file.isDirectory) {
-                        pathStack.addLast(currentPath)
-                        currentPath = file
-                        updateBackButton()
-                        loadDirectory(file)
-                    } else {
-                        fileSelectedListener?.onFileSelected(file)
-                    }
-                }
+                applyFilters() // بيطبّق فلتر الصيغ الحالي + يظبط الـ adapter وclick listener
 
                 updateBackButton()
 

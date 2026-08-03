@@ -215,6 +215,7 @@ Amr Hamam 3D © 2026</string>
     <string name="section_background">Arrière-plan</string>
     <string name="files_search_hint">Rechercher des fichiers...</string>
     <string name="files_folder_item_count">%1$d éléments</string>
+    <string name="files_filter_match_count">%1$d fichiers correspondants</string>
     <string name="files_item_meta_format">%1$s  ·  %2$s</string>
     <string name="settings_zup">Axe vertical : Z (3ds Max/CAO)</string>
     <string name="settings_zup_sub">Activer pour les fichiers Z-up — désactiver si le fichier est déjà Y-up</string>
