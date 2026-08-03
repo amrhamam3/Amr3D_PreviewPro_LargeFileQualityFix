@@ -985,9 +985,15 @@ class ViewerFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                val onProgress: (Int) -> Unit = { percent ->
+                    // بيتنادى من خيط IO — لازم ننقل التحديث للـ main thread
+                    requireActivity().runOnUiThread {
+                        updateLoadingBar(getString(R.string.loading_analyzing), percent)
+                    }
+                }
                 val dxfModel = withContext(Dispatchers.IO) {
-                    if (kind == FileKind.AI) AIParser.parse(requireContext(), uri)
-                    else DXFParser.parse(requireContext(), uri)
+                    if (kind == FileKind.AI) AIParser.parse(requireContext(), uri, onProgress)
+                    else DXFParser.parse(requireContext(), uri, onProgress)
                 }
 
                 if (!isAdded || view == null) return@launch

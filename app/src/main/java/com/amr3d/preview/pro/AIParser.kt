@@ -33,7 +33,7 @@ object AIParser {
 
     private const val MAX_FILE_SIZE = 300_000_000L // ملفات AI عادةً صغيرة جدًا مقارنة بـ STL/OBJ
 
-    fun parse(context: Context, uri: Uri): DxfModel {
+    fun parse(context: Context, uri: Uri, onProgress: (Int) -> Unit = {}): DxfModel {
         val resolver = context.contentResolver
         val fileSize: Long = resolver.query(
             uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
@@ -48,22 +48,42 @@ object AIParser {
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw AIParseException(context.getString(R.string.error_ai_read_failed))
         if (bytes.isEmpty()) throw AIParseException(context.getString(R.string.error_ai_read_failed))
+        onProgress(20) // قراءة البايتات الخام خلصت — دايمًا سريعة نسبيًا (I/O بس، من غير تحليل)
 
         val isPdfFlavor = bytes.size >= 5 && String(bytes, 0, 5, Charsets.US_ASCII) == "%PDF-"
-        val contentText = if (isPdfFlavor) extractPdfContentStreams(bytes) else String(bytes, Charsets.ISO_8859_1)
+        val contentText = if (isPdfFlavor) {
+            extractPdfContentStreams(bytes) { p -> onProgress(20 + (p * 30) / 100) } // 20-50%
+        } else {
+            String(bytes, Charsets.ISO_8859_1)
+        }
+        onProgress(50)
         if (contentText.isBlank()) throw AIParseException(context.getString(R.string.error_ai_no_geometry))
 
-        val model = parseContentStream(contentText)
+        val model = parseContentStream(contentText) { p -> onProgress(50 + (p * 40) / 100) } // 50-90%
         if (model.lines.isEmpty()) throw AIParseException(context.getString(R.string.error_ai_no_geometry))
+        onProgress(90)
         return model
     }
 
     /** المحلّل المشترك: نفس منطق بناء المسارات بغض النظر عن مصدر النص (PostScript
-     * خام أو Content Stream مستخرج من PDF) — الاتنين بيستخدموا نفس أوامر الرسم. */
-    private fun parseContentStream(contentText: String): DxfModel {
+     * خام أو Content Stream مستخرج من PDF) — الاتنين بيستخدموا نفس أوامر الرسم.
+     *
+     * ⚠️ تحسين أداء (اقتراح Amr، بناءً على خبرته في 3ds Max): عدد قطع تفليح
+     * منحنيات Bézier (Flattening) مش رقم ثابت (16) بغض النظر عن حجم الملف —
+     * بقى تكيّفي حسب حجم النص. الملفات الصغيرة بتاخد أعلى جودة (16 قطعة/منحنى)،
+     * والملفات الكبيرة (فيها آلاف المنحنيات غالبًا) بتاخد جودة أقل (نزولًا لـ 4)
+     * — التطبيق ده للعرض بس حاليًا مش للتصنيع الدقيق، فالفرق البصري ضئيل جدًا
+     * مقابل تقليل حقيقي في عدد الخطوط الناتجة (وبالتالي وقت التحميل والرسم). */
+    private fun parseContentStream(contentText: String, onProgress: (Int) -> Unit = {}): DxfModel {
         val lines = ArrayList<DxfLine>()
         var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+
+        val bezierSegments = when {
+            contentText.length < 500_000 -> 16
+            contentText.length < 2_000_000 -> 8
+            else -> 4
+        }
 
         fun noteBounds(x: Float, y: Float) {
             if (x < minX) minX = x; if (y < minY) minY = y
@@ -90,7 +110,7 @@ object AIParser {
         }
 
         fun flattenBezier(x0: Float, y0: Float, x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) {
-            val segments = 16
+            val segments = bezierSegments
             var px = x0; var py = y0
             for (s in 1..segments) {
                 val t = s.toFloat() / segments
@@ -167,9 +187,15 @@ object AIParser {
         }
 
         var i = 0
-        val n = contentText.length
+        val n = contentText.length.coerceAtLeast(1)
         val tokenBuilder = StringBuilder()
+        val progressStep = kotlin.math.max(n / 100, 2000)
+        var lastReportedPercent = -1
         while (i < n) {
+            if (i % progressStep == 0) {
+                val percent = ((i.toLong() * 100L) / n).toInt().coerceIn(0, 100)
+                if (percent != lastReportedPercent) { lastReportedPercent = percent; onProgress(percent) }
+            }
             val ch = contentText[i]
             when {
                 ch == '%' -> { while (i < n && contentText[i] != '\n') i++ }
@@ -216,11 +242,15 @@ object AIParser {
     /** بيدوّر على كل الـ Streams في ملف الـ PDF، يفك ضغطها (لو FlateDecode)، وبيفلتر
      * بس اللي شكلها فعليًا أوامر رسم (مش صور/خطوط مضمّنة) — طريقة عملية بدل تحليل
      * بنية PDF الكاملة. كافي لملفات AI عادية بلوحة رسم واحدة. */
-    private fun extractPdfContentStreams(bytes: ByteArray): String {
+    private fun extractPdfContentStreams(bytes: ByteArray, onProgress: (Int) -> Unit = {}): String {
         val text = StringBuilder()
         val latin = String(bytes, Charsets.ISO_8859_1) // تحويل حرف-لبايت 1:1 بلا فقدان، مش ترميز نصي حقيقي
+        val totalLen = latin.length.coerceAtLeast(1)
         var searchFrom = 0
+        var lastReportedPercent = -1
         while (true) {
+            val percent = ((searchFrom.toLong() * 100L) / totalLen).toInt().coerceIn(0, 100)
+            if (percent != lastReportedPercent) { lastReportedPercent = percent; onProgress(percent) }
             val streamIdx = latin.indexOf("stream", searchFrom)
             if (streamIdx < 0) break
             val dictStart = (streamIdx - 400).coerceAtLeast(0)

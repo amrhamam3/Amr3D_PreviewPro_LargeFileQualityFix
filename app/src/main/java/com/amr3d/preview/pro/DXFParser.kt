@@ -18,18 +18,45 @@ object DXFParser {
 
     private data class DxfPair(val code: Int, val value: String)
 
-    fun parse(context: Context, uri: Uri): DxfModel {
-        // ⚠️ إصلاح أداء/ذاكرة مهم: النسخة القديمة كانت بتقرا الملف كله في String واحد
-        // ضخم (readText())، وبعدين تقسّمه لقائمة كاملة بكل أسطر الملف (text.lines())
-        // — يعني نسختين إضافيتين من كل بيانات الملف قاعدين في الذاكرة في نفس اللحظة
-        // فوق الـ pairs نفسها. لملف DXF حقيقي 10 ميجا (اللي عادة فيه مئات الآلاف من
-        // الأسطر بسبب صيغة DXF المطوّلة)، ده كان بيضاعف استهلاك الذاكرة أضعاف كتير
-        // ويسبب OutOfMemoryError. دلوقتي بنقرا سطرين سطرين مباشرة من الـ stream (زي
-        // BufferedReader.readLine() العادي) من غير ما نحتفظ بالملف كله أو بكل أسطره
-        // كقائمة منفصلة — نفس منطق تجميع الـ pairs (code, value) بالظبط زي الأول.
+    fun parse(context: Context, uri: Uri, onProgress: (Int) -> Unit = {}): DxfModel {
+        // ⚠️ إصلاح مهم (بلاغ Amr): الشريط كان "وهمي" — القراءة الفعلية هنا (سطرين
+        // سطرين من الـ stream) كانت بتاخد وقت طويل من غير أي تحديث للشريط خالص،
+        // فبيفضل واقف عند 0% طول المدة دي وبعدين يقفز لـ 95% مرة واحدة لما يخلص.
+        // ده اللي كان بيوهم المستخدم إن التطبيق واقف فيدوس على الشاشة ظنًا منه إنه
+        // متعلق. دلوقتي: 0-50% بحساب البايتات المقروءة فعليًا من الملف (مش تخمين)،
+        // و50-90% بحساب موقعنا في قسم الـ ENTITIES نفسه.
+        val fileSize: Long = context.contentResolver.query(
+            uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (idx >= 0 && !c.isNull(idx)) c.getLong(idx) else -1L
+            } else -1L
+        } ?: -1L
+
         val pairs = mutableListOf<DxfPair>()
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            val reader = stream.bufferedReader(Charsets.ISO_8859_1)
+        context.contentResolver.openInputStream(uri)?.use { rawStream ->
+            var bytesRead = 0L
+            var lastReportedPercent = -1
+            val countingStream = object : java.io.InputStream() {
+                override fun read(): Int {
+                    val r = rawStream.read()
+                    if (r >= 0) bytesRead++
+                    return r
+                }
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val n = rawStream.read(b, off, len)
+                    if (n > 0) {
+                        bytesRead += n
+                        if (fileSize > 0) {
+                            val percent = ((bytesRead * 50L) / fileSize).toInt().coerceIn(0, 50)
+                            if (percent != lastReportedPercent) { lastReportedPercent = percent; onProgress(percent) }
+                        }
+                    }
+                    return n
+                }
+            }
+            val reader = countingStream.bufferedReader(Charsets.ISO_8859_1)
             while (true) {
                 val codeLine = reader.readLine() ?: break
                 val valueLine = reader.readLine() ?: break
@@ -37,6 +64,7 @@ object DXFParser {
                 if (code != null) pairs.add(DxfPair(code, valueLine.trim()))
             }
         } ?: throw STLParseException(context.getString(R.string.error_dxf_open_failed))
+        onProgress(50)
 
         // ══ 1) قراءة جدول الطبقات (LAYER table) — عشان نعرف لون كل طبقة ══
         val layerColors = mutableMapOf<String, Int>() // اسم الطبقة -> رقم لون ACI
@@ -113,7 +141,11 @@ object DXFParser {
         }
 
         var pos = entStart
+        val entRange = (entEnd - entStart).coerceAtLeast(1)
+        var lastEntityPercent = -1
         while (pos < entEnd) {
+            val entityPercent = (50 + ((pos - entStart).toLong() * 40L / entRange).toInt()).coerceIn(50, 90)
+            if (entityPercent != lastEntityPercent) { lastEntityPercent = entityPercent; onProgress(entityPercent) }
             val pair = pairs[pos]
             when {
                 pair.code == 0 && pair.value == "LINE" -> {
@@ -291,6 +323,7 @@ object DXFParser {
             colorPalette = emptyList()
         }
 
+        onProgress(90)
         return DxfModel(
             lines = finalLines,
             arcs = finalArcs,
