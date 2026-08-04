@@ -32,6 +32,21 @@ class DXF2DView @JvmOverloads constructor(
     // بيحتوي على أسماء الطبقات المخفية فقط — أي طبقة مش موجودة هنا معناها ظاهرة (الحالة الافتراضية)
     private val hiddenLayers = mutableSetOf<String>()
 
+    /** ⚠️ إصلاح جذري لمشكلة الـ hang مع ملفات DXF/AI الكبيرة (بلاغ Amr — تجارب
+     * تانية بتفتح نفس الملفات من غير مشاكل): الكود القديم كان بينادي
+     * canvas.drawLine() **مرة واحدة لكل خط لوحده** جوه onDraw() — يعني لملف فيه
+     * 50 ألف خط (شائع جدًا في DXF/AI حقيقية، خصوصًا بعد تفليح منحنيات AI)، كان
+     * بيعمل 50 ألف نداء منفصل لـ Canvas **في كل فريم واحد** (60 مرة في الثانية
+     * وقت أي سحب/تكبير) — تكلفة نداء Canvas مش صفر حتى مع تسريع الهاردوير،
+     * فمضاعَفة بالعدد ده كانت كافية تعلّق التطبيق تمامًا.
+     *
+     * الحل: تجميع كل الخطوط (والأقواس بعد تفليحها لخطوط قصيرة) حسب اللون في
+     * مصفوفة واحدة مسطّحة لكل لون (Cache)، تتبني مرة واحدة بس لما الموديل
+     * يتغيّر أو رؤية طبقة تتغيّر — مش في كل فريم. وقت الرسم الفعلي، بنستخدم
+     * canvas.drawLines() (الجمع، مش المفرد) اللي بيرسم آلاف الخطوط بنداء
+     * Canvas **واحد بس لكل لون** — فرق جوهري في الأداء، مش تحسين طفيف. */
+    private var lineColorGroups: Map<Int, FloatArray> = emptyMap()
+
     // مصفوفة تحويل من إحداثيات DXF (وحدات الرسم) لإحداثيات الشاشة (بكسل)
     private var scale = 1f
     private var offsetX = 0f
@@ -221,7 +236,47 @@ class DXF2DView @JvmOverloads constructor(
         showGapHighlight = false
         gapHighlightSegments = null
         snapPoints = buildSnapPoints(m)
+        buildRenderCache()
         post { resetView() }
+    }
+
+    /** بيبني lineColorGroups من جديد — بيتنادى مرة واحدة بس لما الموديل يتغيّر أو
+     * رؤية طبقة تتغيّر، مش في كل فريم رسم (شوف الشرح فوق تعريف lineColorGroups). */
+    private fun buildRenderCache() {
+        val m = model
+        if (m == null) { lineColorGroups = emptyMap(); return }
+
+        val buckets = HashMap<Int, ArrayList<Float>>()
+        fun addSegment(color: Int, x1: Float, y1: Float, x2: Float, y2: Float) {
+            buckets.getOrPut(color) { ArrayList() }.apply {
+                add(x1); add(y1); add(x2); add(y2)
+            }
+        }
+
+        for (line in m.lines) {
+            if (!isLayerVisible(line.layer)) continue
+            addSegment(line.color, line.x1, line.y1, line.x2, line.y2)
+        }
+
+        // تفليح الأقواس لخطوط قصيرة **هنا بس** (وقت بناء الكاش، مرة واحدة) —
+        // نفس منطق درجات الزاوية اللي كان في drawArc القديمة بالظبط
+        for (arc in m.arcs) {
+            if (!isLayerVisible(arc.layer)) continue
+            val segments = 48
+            var end = arc.endDeg
+            if (end <= arc.startDeg) end += 360f
+            val totalAngle = end - arc.startDeg
+            var prevX = 0f; var prevY = 0f
+            for (s in 0..segments) {
+                val angle = Math.toRadians((arc.startDeg + s * totalAngle / segments).toDouble())
+                val x = arc.cx + arc.r * cos(angle).toFloat()
+                val y = arc.cy + arc.r * sin(angle).toFloat()
+                if (s > 0) addSegment(arc.color, prevX, prevY, x, y)
+                prevX = x; prevY = y
+            }
+        }
+
+        lineColorGroups = buckets.mapValues { it.value.toFloatArray() }
     }
 
     /** بيرجّع أسماء كل الطبقات الموجودة في الملف الحالي، بترتيب ظهورها. فاضية لو مفيش موديل محمّل. */
@@ -253,6 +308,7 @@ class DXF2DView @JvmOverloads constructor(
     fun setLayerVisible(layer: String, visible: Boolean) {
         if (visible) hiddenLayers.remove(layer) else hiddenLayers.add(layer)
         model?.let { snapPoints = buildSnapPoints(it) }
+        buildRenderCache()
         invalidate()
     }
 
@@ -338,6 +394,7 @@ class DXF2DView @JvmOverloads constructor(
         hiddenLayers.clear()
         showGapHighlight = false
         gapHighlightSegments = null
+        lineColorGroups = emptyMap()
         invalidate()
     }
 
@@ -374,14 +431,21 @@ class DXF2DView @JvmOverloads constructor(
 
         val m = model ?: return
 
-        for (line in m.lines) {
-            if (!isLayerVisible(line.layer)) continue
-            defaultPaint.color = line.color
-            canvas.drawLine(
-                toScreenX(line.x1), toScreenY(line.y1),
-                toScreenX(line.x2), toScreenY(line.y2),
-                defaultPaint
-            )
+        // ── رسم كل الخطوط + الأقواس (بعد تفليحها) بنداء Canvas واحد لكل لون —
+        // شوف الشرح الكامل عند تعريف lineColorGroups فوق. بنحوّل الإحداثيات من
+        // فراغ الموديل لفراغ الشاشة هنا بس (شغل رخيص، مجرد ضرب وجمع)، والتكلفة
+        // الحقيقية اللي كانت بتسبب التعليق (نداء Canvas نفسه) بقت مرة واحدة لكل
+        // لون بدل مرة لكل خط. ──
+        for ((color, modelCoords) in lineColorGroups) {
+            val screenCoords = FloatArray(modelCoords.size)
+            var i = 0
+            while (i < modelCoords.size) {
+                screenCoords[i] = toScreenX(modelCoords[i])
+                screenCoords[i + 1] = toScreenY(modelCoords[i + 1])
+                i += 2
+            }
+            defaultPaint.color = color
+            canvas.drawLines(screenCoords, defaultPaint)
         }
 
         for (circle in m.circles) {
@@ -391,12 +455,6 @@ class DXF2DView @JvmOverloads constructor(
                 toScreenX(circle.cx), toScreenY(circle.cy),
                 circle.r * scale, defaultPaint
             )
-        }
-
-        for (arc in m.arcs) {
-            if (!isLayerVisible(arc.layer)) continue
-            defaultPaint.color = arc.color
-            drawArc(canvas, arc)
         }
 
         drawMeasurement(canvas)
@@ -480,23 +538,6 @@ class DXF2DView @JvmOverloads constructor(
                 8f, 8f, measureLabelBgPaint
             )
             canvas.drawText(label, labelX - textWidth / 2f, labelY, measureTextPaint)
-        }
-    }
-
-    private fun drawArc(canvas: Canvas, arc: DxfArc) {
-        val segments = 48
-        var end = arc.endDeg
-        if (end <= arc.startDeg) end += 360f
-        val totalAngle = end - arc.startDeg
-        var prevX = 0f; var prevY = 0f
-        for (s in 0..segments) {
-            val angle = Math.toRadians((arc.startDeg + s * totalAngle / segments).toDouble())
-            val x = arc.cx + arc.r * cos(angle).toFloat()
-            val y = arc.cy + arc.r * sin(angle).toFloat()
-            if (s > 0) {
-                canvas.drawLine(toScreenX(prevX), toScreenY(prevY), toScreenX(x), toScreenY(y), defaultPaint)
-            }
-            prevX = x; prevY = y
         }
     }
 
