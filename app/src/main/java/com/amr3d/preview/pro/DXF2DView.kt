@@ -26,6 +26,19 @@ class DXF2DView @JvmOverloads constructor(
     private var model: DxfModel? = null
     val currentModel: DxfModel? get() = model
     private var snapPoints: List<FloatArray> = emptyList() // كل نقاط النهايات/المراكز القابلة للالتقاط [x, y]
+
+    /** ⚠️ نفس فلسفة إصلاح الخطوط بالظبط (شوف lineColorGroups فوق) — بلاغ Amr:
+     * "بيهنج لما بضغط على القياس". السبب: drawMeasurement() كان بيعمل loop على
+     * **كل** نقاط الالتقاط (ممكن توصل لمئات الآلاف في ملف تقيل) في كل فريم
+     * رسم واحد طول ما وضع القياس مفعّل — حتى لو أغلبها خارج حدود الشاشة
+     * المرئية فعليًا. الحل: فهرسة النقاط في شبكة مكانية (Grid) مرة واحدة بس
+     * (buildSnapGrid)، وفي وقت الرسم بنستعلم بس عن الخلايا اللي فعليًا متقاطعة
+     * مع حدود الشاشة الحالية — مش كل نقطة في الملف كله. نفس الفهرسة دي بتُستخدم
+     * كمان في findSnapPoint (لمس المستخدم) بدل مسح القائمة كاملة. */
+    private var snapGrid: Map<Long, List<FloatArray>> = emptyMap()
+    private var snapGridCellSize = 1f
+    private var snapGridMinX = 0f
+    private var snapGridMinY = 0f
     private val snapRadiusPx = 45f // نصف قطر الالتقاط بالبكسل — لو التاتش قريب من نقطة حقيقية بيلتصق بيها
 
     // ══ إخفاء/إظهار الطبقات (Layers) ══
@@ -235,7 +248,7 @@ class DXF2DView @JvmOverloads constructor(
         hiddenLayers.clear() // كل الطبقات ظاهرة افتراضيًا مع أي ملف جديد
         showGapHighlight = false
         gapHighlightSegments = null
-        snapPoints = buildSnapPoints(m)
+        refreshSnapPoints(m)
         buildRenderCache()
         post { resetView() }
     }
@@ -307,7 +320,7 @@ class DXF2DView @JvmOverloads constructor(
      * القياس متلتقطش على نقط من طبقة مخفية، وبيعيد رسم الشاشة فورًا. */
     fun setLayerVisible(layer: String, visible: Boolean) {
         if (visible) hiddenLayers.remove(layer) else hiddenLayers.add(layer)
-        model?.let { snapPoints = buildSnapPoints(it) }
+        model?.let { refreshSnapPoints(it) }
         buildRenderCache()
         invalidate()
     }
@@ -371,17 +384,74 @@ class DXF2DView @JvmOverloads constructor(
         return pts
     }
 
+    /** بتحدّث snapPoints + الفهرس المكاني (snapGrid) مع بعض دايمًا — نقطة دخول
+     * واحدة بدل ما ننسى نبني الفهرس بعد أي تحديث لـ snapPoints. */
+    private fun refreshSnapPoints(m: DxfModel) {
+        snapPoints = buildSnapPoints(m)
+        buildSnapGrid()
+    }
+
+    /** بيبني snapGrid من snapPoints الحالية — حجم الخلية محسوب عشان يدّي تقريبًا
+     * عدد خلايا يساوي عدد النقاط (شبكة متوازنة، نفس فلسفة sqrt(n) المستخدمة في
+     * أماكن تانية بالمشروع زي MeshIntegrityChecker). */
+    private fun buildSnapGrid() {
+        val pts = snapPoints
+        if (pts.isEmpty()) { snapGrid = emptyMap(); return }
+
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (p in pts) {
+            if (p[0] < minX) minX = p[0]; if (p[1] < minY) minY = p[1]
+            if (p[0] > maxX) maxX = p[0]; if (p[1] > maxY) maxY = p[1]
+        }
+        val diag = hypot((maxX - minX).toDouble(), (maxY - minY).toDouble()).toFloat().coerceAtLeast(1e-3f)
+        val cellsPerAxis = maxOf(4, kotlin.math.ceil(kotlin.math.sqrt(pts.size.toDouble())).toInt())
+        snapGridCellSize = (diag / cellsPerAxis).coerceAtLeast(1e-4f)
+        snapGridMinX = minX; snapGridMinY = minY
+
+        val buckets = HashMap<Long, MutableList<FloatArray>>()
+        for (p in pts) {
+            val cx = ((p[0] - minX) / snapGridCellSize).toInt()
+            val cy = ((p[1] - minY) / snapGridCellSize).toInt()
+            val key = (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
+            buckets.getOrPut(key) { ArrayList() }.add(p)
+        }
+        snapGrid = buckets
+    }
+
+    private fun cellKeyOf(worldX: Float, worldY: Float): Long {
+        val cx = ((worldX - snapGridMinX) / snapGridCellSize).toInt()
+        val cy = ((worldY - snapGridMinY) / snapGridCellSize).toInt()
+        return (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
+    }
+
+    private fun screenToWorldX(sx: Float) = (sx - offsetX) / scale
+    private fun screenToWorldY(sy: Float) = (offsetY - sy) / scale
+
     /** بيدوّر على أقرب نقطة التقاط لمكان اللمس (بمسافة بالبكسل على الشاشة، مش بوحدات الرسمة) */
     private fun findSnapPoint(screenX: Float, screenY: Float): FloatArray? {
+        if (snapGrid.isEmpty()) return null
+        val worldX = screenToWorldX(screenX)
+        val worldY = screenToWorldY(screenY)
+        // نصف قطر الالتقاط بالبكسل محوّل لوحدات الموديل، عشان نعرف كام خلية حوالين
+        // نقطة اللمس محتاجين نفحص (باستخدام 1 كحد أدنى لتفادي قسمة على صفر لو scale=0)
+        val radiusWorld = snapRadiusPx / scale.coerceAtLeast(1e-6f)
+        val cellSpan = kotlin.math.ceil(radiusWorld / snapGridCellSize).toInt().coerceAtLeast(1)
+        val centerCx = ((worldX - snapGridMinX) / snapGridCellSize).toInt()
+        val centerCy = ((worldY - snapGridMinY) / snapGridCellSize).toInt()
+
         var closest: FloatArray? = null
         var closestDist = snapRadiusPx
-        for (p in snapPoints) {
-            val sx = toScreenX(p[0])
-            val sy = toScreenY(p[1])
-            val d = hypot((sx - screenX).toDouble(), (sy - screenY).toDouble()).toFloat()
-            if (d < closestDist) {
-                closestDist = d
-                closest = p
+        for (dcx in -cellSpan..cellSpan) {
+            for (dcy in -cellSpan..cellSpan) {
+                val key = ((centerCx + dcx).toLong() shl 32) or ((centerCy + dcy).toLong() and 0xffffffffL)
+                val bucket = snapGrid[key] ?: continue
+                for (p in bucket) {
+                    val sx = toScreenX(p[0])
+                    val sy = toScreenY(p[1])
+                    val d = hypot((sx - screenX).toDouble(), (sy - screenY).toDouble()).toFloat()
+                    if (d < closestDist) { closestDist = d; closest = p }
+                }
             }
         }
         return closest
@@ -391,6 +461,7 @@ class DXF2DView @JvmOverloads constructor(
         model = null
         measureP1 = null; measureP2 = null
         snapPoints = emptyList()
+        snapGrid = emptyMap()
         hiddenLayers.clear()
         showGapHighlight = false
         gapHighlightSegments = null
@@ -482,20 +553,31 @@ class DXF2DView @JvmOverloads constructor(
     }
 
     private fun drawMeasurement(canvas: Canvas) {
-        // إظهار نقط الالتقاط المتاحة كنقط خفيفة عشان توضح للمستخدم فين يقدر يلزّق —
-        // بس بنرسم اللي داخل حدود الشاشة المرئية بس، مش كل نقط الملف. للملفات الكبيرة
-        // (عشرات/مئات الآلاف من نقط الالتقاط)، رسم كل نقطة على كل فريم كان بيسبب لاج
-        // واضح جدًا أثناء القياس تحديدًا (تحريك/زوم أثناء وضع القياس بيعيد الرسم باستمرار).
-        if (measureModeOn) {
+        // ⚠️ إصلاح جذري تاني (بلاغ Amr: "بيهنج لما بضغط على القياس"): بدل ما نمشي
+        // على كل نقاط الالتقاط في الملف (ممكن توصل لمئات الآلاف) في كل فريم رسم،
+        // بنستعلم بس عن خلايا الفهرس المكاني (snapGrid) اللي متقاطعة فعليًا مع
+        // حدود الشاشة الحالية — عدد النقاط المفحوصة بقى متناسب مع "اللي بيتعرض
+        // على الشاشة"، مش "حجم الملف كله". شوف شرح snapGrid فوق لتفاصيل أكتر.
+        if (measureModeOn && snapGrid.isNotEmpty()) {
             val margin = 40f
-            val maxSX = width + margin
-            val maxSY = height + margin
-            for (p in snapPoints) {
-                val sx = toScreenX(p[0])
-                if (sx < -margin || sx > maxSX) continue
-                val sy = toScreenY(p[1])
-                if (sy < -margin || sy > maxSY) continue
-                canvas.drawCircle(sx, sy, 5f, snapDotPaint)
+            val wx1 = screenToWorldX(-margin); val wy1 = screenToWorldY(-margin)
+            val wx2 = screenToWorldX(width + margin); val wy2 = screenToWorldY(height + margin)
+            val worldMinX = minOf(wx1, wx2); val worldMaxX = maxOf(wx1, wx2)
+            val worldMinY = minOf(wy1, wy2); val worldMaxY = maxOf(wy1, wy2)
+
+            val cellMinX = ((worldMinX - snapGridMinX) / snapGridCellSize).toInt()
+            val cellMaxX = ((worldMaxX - snapGridMinX) / snapGridCellSize).toInt()
+            val cellMinY = ((worldMinY - snapGridMinY) / snapGridCellSize).toInt()
+            val cellMaxY = ((worldMaxY - snapGridMinY) / snapGridCellSize).toInt()
+
+            for (cx in cellMinX..cellMaxX) {
+                for (cy in cellMinY..cellMaxY) {
+                    val key = (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
+                    val bucket = snapGrid[key] ?: continue
+                    for (p in bucket) {
+                        canvas.drawCircle(toScreenX(p[0]), toScreenY(p[1]), 5f, snapDotPaint)
+                    }
+                }
             }
         }
 
