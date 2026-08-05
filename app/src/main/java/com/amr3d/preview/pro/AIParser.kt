@@ -263,7 +263,7 @@ object AIParser {
         return (0xFF shl 24) or (ri shl 16) or (gi shl 8) or bi
     }
 
-    /** بيدوّر على كل الـ Streams في ملف الـ PDF، يفك ضغطها (لو FlateDecode)، وبيفلتر
+    /** بيدوّر على كل الـ Streams في ملف الـ PDF، يفك تشفيرها (لو محتاجة)، وبيفلتر
      * بس اللي شكلها فعليًا أوامر رسم (مش صور/خطوط مضمّنة) — طريقة عملية بدل تحليل
      * بنية PDF الكاملة. كافي لملفات Illustrator عادية بلوحة رسم واحدة. مستخدمة
      * لملفات .ai — لملفات .pdf شوف [extractFirstPageContentStreams] (بتاخد صفحة
@@ -281,7 +281,7 @@ object AIParser {
             if (streamIdx < 0) break
             val dictStart = (streamIdx - 400).coerceAtLeast(0)
             val dictText = latin.substring(dictStart, streamIdx)
-            val isFlate = dictText.contains("FlateDecode")
+            val filters = extractFilterNames(dictText)
 
             var dataStart = streamIdx + 6
             if (dataStart < latin.length && latin[dataStart] == '\r') dataStart++
@@ -291,7 +291,7 @@ object AIParser {
             if (endIdx < 0) break
             val rawStreamBytes = bytes.copyOfRange(dataStart, endIdx.coerceAtMost(bytes.size))
 
-            val decoded: ByteArray? = if (isFlate) inflate(rawStreamBytes) else rawStreamBytes
+            val decoded: ByteArray? = if (filters.isEmpty()) rawStreamBytes else applyFilters(rawStreamBytes, filters)
 
             if (decoded != null) {
                 val decodedText = String(decoded, Charsets.ISO_8859_1)
@@ -345,7 +345,7 @@ object AIParser {
             val streamIdx = latin.indexOf("stream", objMatch.range.last)
             if (streamIdx < 0) continue
             val objDictText = latin.substring(objMatch.range.last, streamIdx) // ديكشنري الكائن ده بس، مش أي 400 حرف عشوائي
-            val isFlate = objDictText.contains("FlateDecode")
+            val filters = extractFilterNames(objDictText)
 
             var dataStart = streamIdx + 6
             if (dataStart < latin.length && latin[dataStart] == '\r') dataStart++
@@ -354,7 +354,7 @@ object AIParser {
             if (endIdx < 0) continue
             val rawStreamBytes = bytes.copyOfRange(dataStart, endIdx.coerceAtMost(bytes.size))
 
-            val decoded = if (isFlate) inflate(rawStreamBytes) else rawStreamBytes
+            val decoded = if (filters.isEmpty()) rawStreamBytes else applyFilters(rawStreamBytes, filters)
             if (decoded != null) text.append(String(decoded, Charsets.ISO_8859_1)).append('\n')
         }
         // لو مفيش أي Stream اتقرا فعليًا (مثلاً كل الـ objects كانت مش لاقيينها)، رجوع للطريقة الشاملة كملاذ أخير
@@ -373,6 +373,114 @@ object AIParser {
                 out.write(buf, 0, count)
             }
             inflater.end()
+            out.toByteArray()
+        } catch (_: Exception) { null }
+    }
+
+    /** ⚠️ إصلاح (بلاغ Amr، ملف EX3.ai): بعض الأدوات (لقينا الحالة دي مع CorelDRAW
+     * وهو بيصدّر بصيغة AI-compatible) بتشفّر الـ Content Stream الحقيقي بـ **خطوتين**
+     * مش واحدة — مثلًا `/Filter [/ASCIIHexDecode /FlateDecode]`: الأول لازم تفك
+     * ترميز الـ Hex، وبعدين تفك ضغط Flate على الناتج. الكود القديم كان بيفحص وجود
+     * "FlateDecode" كنص وبس، ويحاول يفك ضغط Flate مباشرة على البايتات الخام — وده
+     * كان بيفشل فورًا لأي Stream فيه خطوة تانية قبل الـ Flate (البايتات الخام في
+     * الحالة دي نص Hex مش بيانات مضغوطة أصلًا)، فالـ Stream بالكامل كان بيتجاهل
+     * بصمت. دلوقتي بنستخرج **كل** خطوات الـ Filter بترتيبها ونطبّقهم واحدة ورا
+     * التانية بالظبط زي ما الملف بيحددهم. */
+    private fun extractFilterNames(dictText: String): List<String> {
+        val m = Regex("/Filter\\s*(\\[([^\\]]*)\\]|/(\\w+))").find(dictText) ?: return emptyList()
+        val arrPart = m.groupValues[2]
+        val singlePart = m.groupValues[3]
+        return when {
+            arrPart.isNotBlank() -> Regex("/(\\w+)").findAll(arrPart).map { it.groupValues[1] }.toList()
+            singlePart.isNotBlank() -> listOf(singlePart)
+            else -> emptyList()
+        }
+    }
+
+    /** بتطبّق كل خطوات فك التشفير بترتيبها (زي ما ظاهرين في /Filter). فيلتر مش
+     * معروف (نادر جدًا لملفات القص/الرسم) بنسيبه زي ما هو ونكمل الباقي بدل ما
+     * نفشل الـ Stream بالكامل — أفضل نتيجة جزئية من ولا حاجة خالص. */
+    private fun applyFilters(raw: ByteArray, filters: List<String>): ByteArray? {
+        var data: ByteArray? = raw
+        for (name in filters) {
+            val current = data ?: return null
+            data = when (name) {
+                "FlateDecode", "Fl" -> inflate(current)
+                "ASCIIHexDecode", "AHx" -> decodeAsciiHex(current)
+                "ASCII85Decode", "A85" -> decodeAscii85(current)
+                else -> current
+            }
+        }
+        return data
+    }
+
+    /** فك ترميز ASCIIHexDecode القياسي في PDF: كل بايتين حرف Hex = بايت واحد،
+     * المسافات/أسطر جديدة تتجاهل، والترميز بينتهي عند '>' (أو نهاية البيانات). */
+    private fun decodeAsciiHex(data: ByteArray): ByteArray? {
+        return try {
+            val sb = StringBuilder(data.size)
+            for (b in data) {
+                val c = (b.toInt() and 0xFF).toChar()
+                if (c == '>') break
+                if (!c.isWhitespace()) sb.append(c)
+            }
+            val hex = sb.toString()
+            val out = java.io.ByteArrayOutputStream(hex.length / 2 + 1)
+            var i = 0
+            while (i < hex.length) {
+                val hi = Character.digit(hex[i], 16)
+                if (hi < 0) { i++; continue } // حرف مش Hex صالح — تجاهل دفاعي، نادر الحدوث
+                val lo = if (i + 1 < hex.length) Character.digit(hex[i + 1], 16) else 0
+                out.write((hi shl 4) or (if (lo < 0) 0 else lo))
+                i += 2
+            }
+            out.toByteArray()
+        } catch (_: Exception) { null }
+    }
+
+    /** فك ترميز ASCII85Decode القياسي في PDF/PostScript: مجموعات من 5 حروف
+     * (المدى '!' لـ 'u') بتتحول لـ 4 بايت، والحرف 'z' اختصار لـ 4 بايت أصفار،
+     * والترميز بينتهي عند "~". */
+    private fun decodeAscii85(data: ByteArray): ByteArray? {
+        return try {
+            val out = java.io.ByteArrayOutputStream(data.size)
+            val tuple = IntArray(5)
+            var count = 0
+            var idx = 0
+            while (idx < data.size) {
+                val c = (data[idx].toInt() and 0xFF).toChar()
+                idx++
+                if (c == '~') break
+                if (c.isWhitespace()) continue
+                if (c == 'z' && count == 0) {
+                    out.write(0); out.write(0); out.write(0); out.write(0)
+                    continue
+                }
+                if (c < '!' || c > 'u') continue // حرف مش صالح — تجاهل دفاعي
+                tuple[count] = c.code - '!'.code
+                count++
+                if (count == 5) {
+                    var value = 0L
+                    for (t in tuple) value = value * 85 + t
+                    out.write(((value shr 24) and 0xFF).toInt())
+                    out.write(((value shr 16) and 0xFF).toInt())
+                    out.write(((value shr 8) and 0xFF).toInt())
+                    out.write((value and 0xFF).toInt())
+                    count = 0
+                }
+            }
+            if (count > 0) {
+                // مجموعة أخيرة ناقصة — Padding بـ 'u' (القيمة 84) زي ما بيحدد المواصفة،
+                // ونكتب بس عدد البايتات الناقص (count-1) مش الـ 4 كاملين
+                for (k in count until 5) tuple[k] = 84
+                var value = 0L
+                for (t in tuple) value = value * 85 + t
+                val allBytes = byteArrayOf(
+                    ((value shr 24) and 0xFF).toByte(), ((value shr 16) and 0xFF).toByte(),
+                    ((value shr 8) and 0xFF).toByte(), (value and 0xFF).toByte()
+                )
+                out.write(allBytes, 0, count - 1)
+            }
             out.toByteArray()
         } catch (_: Exception) { null }
     }
