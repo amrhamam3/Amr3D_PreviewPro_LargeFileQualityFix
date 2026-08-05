@@ -29,10 +29,11 @@ class FileBrowserFragment : Fragment() {
     private lateinit var cbFilterGlb: CheckBox
     private lateinit var cbFilterDxf: CheckBox
     private lateinit var cbFilterAi: CheckBox
+    private lateinit var cbFilterPdf: CheckBox
 
     private val pathStack = ArrayDeque<File>()
     private var currentPath = Environment.getExternalStorageDirectory()
-    private val supportedExtensions = setOf("stl", "dxf", "obj", "glb", "ai")
+    private val supportedExtensions = setOf("stl", "dxf", "obj", "glb", "ai", "pdf")
     private var loadJob: Job? = null
     /** كل عناصر المجلد الحالي (قبل أي فلترة بحث/صيغة) — محتاجينها عشان الفلترة
      * تشتغل من غير إعادة تحميل من القرص في كل مرة */
@@ -61,6 +62,7 @@ class FileBrowserFragment : Fragment() {
         cbFilterGlb = view.findViewById(R.id.cbFilterGlb)
         cbFilterDxf = view.findViewById(R.id.cbFilterDxf)
         cbFilterAi  = view.findViewById(R.id.cbFilterAi)
+        cbFilterPdf = view.findViewById(R.id.cbFilterPdf)
 
         loadFilterPrefs()
         updateFormatBadge()
@@ -84,12 +86,13 @@ class FileBrowserFragment : Fragment() {
         cbFilterGlb.setOnCheckedChangeListener(filterListener)
         cbFilterDxf.setOnCheckedChangeListener(filterListener)
         cbFilterAi.setOnCheckedChangeListener(filterListener)
+        cbFilterPdf.setOnCheckedChangeListener(filterListener)
 
         view.findViewById<TextView>(R.id.btnFilterSelectAll).setOnClickListener {
-            listOf(cbFilterStl, cbFilterObj, cbFilterGlb, cbFilterDxf, cbFilterAi).forEach { it.isChecked = true }
+            listOf(cbFilterStl, cbFilterObj, cbFilterGlb, cbFilterDxf, cbFilterAi, cbFilterPdf).forEach { it.isChecked = true }
         }
         view.findViewById<TextView>(R.id.btnFilterClearAll).setOnClickListener {
-            listOf(cbFilterStl, cbFilterObj, cbFilterGlb, cbFilterDxf, cbFilterAi).forEach { it.isChecked = false }
+            listOf(cbFilterStl, cbFilterObj, cbFilterGlb, cbFilterDxf, cbFilterAi, cbFilterPdf).forEach { it.isChecked = false }
         }
 
         searchBox.addTextChangedListener(object : android.text.TextWatcher {
@@ -111,6 +114,7 @@ class FileBrowserFragment : Fragment() {
         if (cbFilterGlb.isChecked) set.add("glb")
         if (cbFilterDxf.isChecked) set.add("dxf")
         if (cbFilterAi.isChecked) set.add("ai")
+        if (cbFilterPdf.isChecked) set.add("pdf")
         return set
     }
 
@@ -130,6 +134,7 @@ class FileBrowserFragment : Fragment() {
         cbFilterGlb.isChecked = "glb" in saved
         cbFilterDxf.isChecked = "dxf" in saved
         cbFilterAi.isChecked  = "ai"  in saved
+        cbFilterPdf.isChecked = "pdf" in saved
     }
 
     /** بادچ صغير أعلى الشاشة بيعرض ملخص الصيغ المفعّلة حاليًا */
@@ -351,7 +356,7 @@ class FileRowAdapter(
                 icon.text = "🧊"
                 icon.setBackgroundResource(R.drawable.bg_file_icon_stl)
             } else {
-                // DXF و AI الاتنين بيترسموا على نفس عارض الـ 2D بالظبط
+                // DXF و AI و PDF كلهم بيترسموا على نفس عارض الـ 2D بالظبط
                 icon.text = "📐"
                 icon.setBackgroundResource(R.drawable.bg_file_icon_dxf)
             }
