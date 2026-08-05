@@ -93,21 +93,51 @@ object AIParser {
      * خام أو Content Stream مستخرج من PDF) — الاتنين بيستخدموا نفس أوامر الرسم.
      *
      * ⚠️ تحسين أداء (اقتراح Amr، بناءً على خبرته في 3ds Max): عدد قطع تفليح
-     * منحنيات Bézier (Flattening) مش رقم ثابت (16) بغض النظر عن حجم الملف —
-     * بقى تكيّفي حسب حجم النص. الملفات الصغيرة بتاخد أعلى جودة (16 قطعة/منحنى)،
-     * والملفات الكبيرة (فيها آلاف المنحنيات غالبًا) بتاخد جودة أقل (نزولًا لـ 4)
-     * — التطبيق ده للعرض بس حاليًا مش للتصنيع الدقيق، فالفرق البصري ضئيل جدًا
-     * مقابل تقليل حقيقي في عدد الخطوط الناتجة (وبالتالي وقت التحميل والرسم). */
+     * منحنيات Bézier (Flattening) مش رقم ثابت (16) بغض النظر عن الملف — بقى
+     * تكيّفي حسب عدد المنحنيات الفعلي في الملف (شوف [estimateBezierSegments]).
+     * الملفات اللي فيها منحنيات قليلة بتاخد أعلى جودة (16 قطعة/منحنى)، والملفات
+     * اللي فيها آلاف المنحنيات بتاخد جودة أقل (نزولًا لـ 4) — التطبيق ده للعرض
+     * بس حاليًا مش للتصنيع الدقيق، فالفرق البصري ضئيل جدًا مقابل تقليل حقيقي في
+     * عدد الخطوط الناتجة (وبالتالي وقت التحميل والرسم). */
+    /** ⚠️ إصلاح (بلاغ Amr: "التكسير كبير جدًا" بعد ما بقى الملف يفتح): كان تقدير
+     * عدد قطع تفتيت كل منحنى (Bézier) معتمد على **طول النص الكلي** — لكن بعض
+     * الملفات (زي EX3.ai) فيها معاينة/تعليقات ضخمة جدًا (لقينا حالة كانت 92% من
+     * الـ Stream معاينة، 8% بس رسم فعلي) بتضخّم الطول من غير أي علاقة بعدد
+     * المنحنيات الحقيقي، فالملف كان بياخد أقل جودة ممكنة (4 قطع) رغم إن فيه
+     * منحنيات قليلة جدًا فعليًا (٢٧٧٣ في ملف الاختبار، رقم بسيط جدًا).
+     *
+     * دلوقتي بنعدّ أوامر المنحنى الفعلية (c/C/v/V/y/Y كـ tokens مستقلة، محاطة
+     * بمسافات) في مرور سريع واحد على النص، **متجاهلين التعليقات** (زي ما
+     * الـ Tokenizer الرئيسي بيعمل بالظبط) — عشان المعاينات المدمجة متأثرش على
+     * التقدير خالص. تكلفة المرور الإضافي ده ضئيلة جدًا (مرور واحد بسيط، بدون أي
+     * تخصيص ذاكرة كبير) مقارنة بالفرق الحقيقي في الجودة. */
+    private fun estimateBezierSegments(contentText: String): Int {
+        var curveCount = 0
+        var i = 0
+        val n = contentText.length
+        while (i < n) {
+            val c = contentText[i]
+            if (c == '%') { while (i < n && contentText[i] != '\n') i++; continue }
+            if (c == 'c' || c == 'C' || c == 'v' || c == 'V' || c == 'y' || c == 'Y') {
+                val prevOk = i == 0 || contentText[i - 1].isWhitespace()
+                val nextOk = i + 1 >= n || contentText[i + 1].isWhitespace()
+                if (prevOk && nextOk) curveCount++
+            }
+            i++
+        }
+        return when {
+            curveCount < 5_000 -> 16
+            curveCount < 20_000 -> 8
+            else -> 4
+        }
+    }
+
     private fun parseContentStream(contentText: String, onProgress: (Int) -> Unit = {}): DxfModel {
         val lines = ArrayList<DxfLine>()
         var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
 
-        val bezierSegments = when {
-            contentText.length < 500_000 -> 16
-            contentText.length < 2_000_000 -> 8
-            else -> 4
-        }
+        val bezierSegments = estimateBezierSegments(contentText)
 
         fun noteBounds(x: Float, y: Float) {
             if (x < minX) minX = x; if (y < minY) minY = y
