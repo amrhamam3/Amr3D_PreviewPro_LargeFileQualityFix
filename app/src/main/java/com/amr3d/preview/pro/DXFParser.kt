@@ -281,6 +281,51 @@ object DXFParser {
                     }
                 }
 
+                // ⚠️ إصلاح (بلاغ Amr، ملف EX1.dxf): كان بيتجاهل بصمت — أي DXF مبني
+                // بالكامل من منحنيات SPLINE (شائع في الأشكال العضوية/الحروف) كان
+                // بيرجع موديل فاضي تمامًا (صفر خطوط/أقواس/دوائر). بنبنيها هنا بنفس
+                // فلسفة LWPOLYLINE بالظبط: خطوط مستقيمة بين نقط متتالية — مش تمثيل
+                // NURBS حقيقي (درجة/عقد/أوزان)، كافي تمامًا لعارض عرض وقياس زي ده.
+                // نفضّل نقط الـ Fit (code 11/21) لو موجودة لأنها واقعة فعليًا على
+                // المنحنى نفسه، وإلا بنستخدم نقط التحكم (code 10/20) كتقريب بديل.
+                pair.code == 0 && pair.value == "SPLINE" -> {
+                    pos++
+                    var closed = false
+                    val controlPts = mutableListOf<Pair<Float, Float>>()
+                    val fitPts = mutableListOf<Pair<Float, Float>>()
+                    var ccx = 0f; var hasCx = false
+                    var fcx = 0f; var hasFx = false
+                    var layerName: String? = null; var aci: Int? = null
+                    while (pos < entEnd && pairs[pos].code != 0) {
+                        when (pairs[pos].code) {
+                            8 -> layerName = pairs[pos].value
+                            62 -> aci = pairs[pos].value.toIntOrNull()
+                            70 -> closed = (pairs[pos].value.trim().toIntOrNull() ?: 0) and 1 != 0
+                            10 -> { ccx = pairs[pos].value.toFloatOrNull() ?: 0f; hasCx = true }
+                            20 -> {
+                                val ccy = pairs[pos].value.toFloatOrNull() ?: 0f
+                                if (hasCx) { controlPts.add(Pair(ccx, ccy)); hasCx = false }
+                            }
+                            11 -> { fcx = pairs[pos].value.toFloatOrNull() ?: 0f; hasFx = true }
+                            21 -> {
+                                val fcy = pairs[pos].value.toFloatOrNull() ?: 0f
+                                if (hasFx) { fitPts.add(Pair(fcx, fcy)); hasFx = false }
+                            }
+                        }
+                        pos++
+                    }
+                    val pts = if (fitPts.size >= 2) fitPts else controlPts
+                    val col = resolveColor(aci, layerName)
+                    val lyr = normalizeLayer(layerName)
+                    for (k in 0 until pts.size - 1) {
+                        lines.add(DxfLine(pts[k].first, pts[k].second, pts[k + 1].first, pts[k + 1].second, col, lyr))
+                        grow(pts[k].first, pts[k].second); grow(pts[k + 1].first, pts[k + 1].second)
+                    }
+                    if (closed && pts.size > 1) {
+                        lines.add(DxfLine(pts.last().first, pts.last().second, pts.first().first, pts.first().second, col, lyr))
+                    }
+                }
+
                 else -> pos++
             }
         }
