@@ -166,6 +166,9 @@ Amr Hamam 3D © 2026</string>
     <string name="error_ai_too_large">El archivo AI es demasiado grande</string>
     <string name="error_ai_read_failed">No se pudo leer el archivo AI</string>
     <string name="error_ai_no_geometry">El archivo AI no contiene gráficos visibles</string>
+    <string name="error_pdf_too_large">El archivo PDF es demasiado grande</string>
+    <string name="error_pdf_read_failed">No se pudo leer el archivo PDF</string>
+    <string name="error_pdf_no_geometry">El archivo PDF no contiene gráficos visibles</string>
     <string name="error_stl_corrupt_triangle">Archivo STL dañado - no se puede leer el triángulo n.º %1$d</string>
     <string name="error_stl_invalid_value">Valor no válido en el archivo en: %1$s</string>
     <string name="error_stl_ascii_no_triangles">No se encontraron triángulos válidos en el archivo STL ASCII</string>
