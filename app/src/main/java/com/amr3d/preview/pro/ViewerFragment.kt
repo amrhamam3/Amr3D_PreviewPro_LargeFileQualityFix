@@ -587,11 +587,12 @@ class ViewerFragment : Fragment() {
     /** أنواع الملفات المدعومة — DXF/AI بيترسموا كرسمة ثنائية الأبعاد (نفس مسار
      * DXF بالظبط، الاتنين بيتحوّلوا لنفس شكل [DxfModel])، وأي حاجة تانية بترسم
      * كموديل صلب ثلاثي الأبعاد (STL/OBJ/GLB بيتحوّلوا لنفس شكل [STLModel]). */
-    private enum class FileKind { STL, OBJ, GLB, DXF, AI }
+    private enum class FileKind { STL, OBJ, GLB, DXF, AI, PDF }
 
     private fun fileKindFromExtension(ext: String): FileKind = when (ext) {
         "dxf" -> FileKind.DXF
         "ai"  -> FileKind.AI
+        "pdf" -> FileKind.PDF
         "obj" -> FileKind.OBJ
         "glb" -> FileKind.GLB
         else  -> FileKind.STL // افتراضي (زي السلوك القديم: أي امتداد غير معروف كان بيتعامل كـ STL)
@@ -613,7 +614,7 @@ class ViewerFragment : Fragment() {
             val sizeBytes = withContext(Dispatchers.IO) { quickFileSize(uri) }
             if (!isAdded || view == null) return@launch
 
-            val threshold = if (kind == FileKind.DXF || kind == FileKind.AI) DXF_LARGE_FILE_BYTES else STL_LARGE_FILE_BYTES
+            val threshold = if (kind == FileKind.DXF || kind == FileKind.AI || kind == FileKind.PDF) DXF_LARGE_FILE_BYTES else STL_LARGE_FILE_BYTES
             if (sizeBytes >= 0 && sizeBytes >= threshold) {
                 showLargeFileWarning(uri, kind, sizeBytes)
             } else {
@@ -656,7 +657,7 @@ class ViewerFragment : Fragment() {
     }
 
     private fun proceedToLoad(uri: Uri, kind: FileKind, forceSimplify: Boolean) {
-        if (kind == FileKind.DXF || kind == FileKind.AI) load2DModelFile(uri, kind)
+        if (kind == FileKind.DXF || kind == FileKind.AI || kind == FileKind.PDF) load2DModelFile(uri, kind)
         else load3DModelFile(uri, kind, forceSimplify)
     }
 
@@ -762,7 +763,7 @@ class ViewerFragment : Fragment() {
         // DXF/AI ملفات ثنائية الأبعاد بتتفهرس بطريقة مختلفة تمامًا ومفيهاش تبسيط —
         // أي صيغة تانية (STL/OBJ/GLB) بتتحوّل لنفس شكل STLModel الموحّد فالتبسيط
         // بيتطبق عليها كلها بنفس الطريقة بالظبط
-        val isSolid3D = kind != FileKind.DXF && kind != FileKind.AI
+        val isSolid3D = kind != FileKind.DXF && kind != FileKind.AI && kind != FileKind.PDF
         val message = if (isSolid3D) getString(R.string.large_file_simplify_message)
                       else getString(R.string.large_file_confirm_message_generic)
         showStyledConfirmDialog(
@@ -992,8 +993,11 @@ class ViewerFragment : Fragment() {
                     }
                 }
                 val dxfModel = withContext(Dispatchers.IO) {
-                    if (kind == FileKind.AI) AIParser.parse(requireContext(), uri, onProgress)
-                    else DXFParser.parse(requireContext(), uri, onProgress)
+                    when (kind) {
+                        FileKind.AI  -> AIParser.parse(requireContext(), uri, onProgress)
+                        FileKind.PDF -> AIParser.parse(requireContext(), uri, onProgress, isPdfFile = true)
+                        else         -> DXFParser.parse(requireContext(), uri, onProgress)
+                    }
                 }
 
                 if (!isAdded || view == null) return@launch
