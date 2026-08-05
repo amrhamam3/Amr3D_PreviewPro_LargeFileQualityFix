@@ -13,10 +13,18 @@ class AIParseException(message: String) : Exception(message)
  * 2) AI "حديث" (Illustrator 9+ بالإعدادات الافتراضية) — ملف PDF حقيقي بالكامل
  *    (بيبدأ بـ %PDF-)، والمحتوى غالبًا مضغوط (FlateDecode/zlib).
  *
- * الاتنين بيستخدموا في النهاية نفس عائلة أوامر رسم PostScript/PDF القياسية
- * (moveto/lineto/curveto/closepath/fill) — فبعد استخراج نص الأوامر الخام (مباشرة
- * للنوع الأول، بعد فك ضغط وتجميع الـ Content Streams للنوع التاني)، بنستخدم نفس
- * المُحلّل (Tokenizer) والمنطق لبناء المسارات للاتنين.
+ * ⚠️ بيتعامل كمان مع ملفات PDF عادية (مش AI) — [isPdfFile]=true. الهدف هنا محدود
+ * عمدًا: التطبيق موجّه لعملاء ورش القص (CNC/ليزر) لعرض وقياس ملفاتهم، مش لمصممين
+ * محترفين محتاجين تعامل كامل مع كل مواصفة PDF. يعني:
+ * - بس **الصفحة الأولى** — أي صفحة تانية في ملف PDF متعدد الصفحات بتتجاهل بصمت.
+ * - بس الرسم الشعاعي (Vector) — أي صورة مضمّنة (Image/XObject) بتتجاهل.
+ * - لو معرفناش نلاقي بنية "صفحة" واضحة (ملف PDF غريب الشكل)، بنرجع تلقائيًا
+ *   لنفس أسلوب البحث الشامل المستخدم لملفات AI (أفضل من ما نرجّع خطأ فورًا).
+ *
+ * الاتنين (AI وPDF) بيستخدموا في النهاية نفس عائلة أوامر رسم PostScript/PDF
+ * القياسية (moveto/lineto/curveto/closepath/fill) — فبعد استخراج نص الأوامر الخام
+ * (مباشرة للـ AI الكلاسيكي، بعد فك ضغط وتجميع الـ Content Streams للباقي)، بنستخدم
+ * نفس المُحلّل (Tokenizer) والمنطق لبناء المسارات للكل.
  *
  * ⚠️ قرارات نطاق متعمّدة (زي OBJ/GLB بالظبط):
  * - بنتجاهل النصوص (Text/Fonts) تمامًا — مالهاش معنى لملف قصّ ليزر.
@@ -31,9 +39,13 @@ class AIParseException(message: String) : Exception(message)
  */
 object AIParser {
 
-    private const val MAX_FILE_SIZE = 300_000_000L // ملفات AI عادةً صغيرة جدًا مقارنة بـ STL/OBJ
+    private const val MAX_FILE_SIZE = 300_000_000L // ملفات AI/PDF عادةً صغيرة جدًا مقارنة بـ STL/OBJ
 
-    fun parse(context: Context, uri: Uri, onProgress: (Int) -> Unit = {}): DxfModel {
+    /** [isPdfFile] بتتحكم في حاجتين مع بعض: (1) رسائل الخطأ بتتكلم عن "PDF" مش
+     * "AI" لو الملف اللي المستخدم فتحه فعليًا .pdf، (2) بيستخدم استخراج "الصفحة
+     * الأولى بس" بدل المسح الشامل لكل الملف (المناسب أكتر لملفات AI اللي غالبًا
+     * لوحة رسم واحدة أصلًا). */
+    fun parse(context: Context, uri: Uri, onProgress: (Int) -> Unit = {}, isPdfFile: Boolean = false): DxfModel {
         val resolver = context.contentResolver
         val fileSize: Long = resolver.query(
             uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
@@ -43,24 +55,36 @@ object AIParser {
                 if (idx >= 0 && !c.isNull(idx)) c.getLong(idx) else -1L
             } else -1L
         } ?: -1L
-        if (fileSize > MAX_FILE_SIZE) throw AIParseException(context.getString(R.string.error_ai_too_large))
+        if (fileSize > MAX_FILE_SIZE) {
+            throw AIParseException(context.getString(if (isPdfFile) R.string.error_pdf_too_large else R.string.error_ai_too_large))
+        }
 
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: throw AIParseException(context.getString(R.string.error_ai_read_failed))
-        if (bytes.isEmpty()) throw AIParseException(context.getString(R.string.error_ai_read_failed))
+            ?: throw AIParseException(context.getString(if (isPdfFile) R.string.error_pdf_read_failed else R.string.error_ai_read_failed))
+        if (bytes.isEmpty()) {
+            throw AIParseException(context.getString(if (isPdfFile) R.string.error_pdf_read_failed else R.string.error_ai_read_failed))
+        }
         onProgress(20) // قراءة البايتات الخام خلصت — دايمًا سريعة نسبيًا (I/O بس، من غير تحليل)
 
         val isPdfFlavor = bytes.size >= 5 && String(bytes, 0, 5, Charsets.US_ASCII) == "%PDF-"
         val contentText = if (isPdfFlavor) {
-            extractPdfContentStreams(bytes) { p -> onProgress(20 + (p * 30) / 100) } // 20-50%
+            if (isPdfFile) {
+                extractFirstPageContentStreams(bytes) { p -> onProgress(20 + (p * 30) / 100) } // 20-50%
+            } else {
+                extractPdfContentStreams(bytes) { p -> onProgress(20 + (p * 30) / 100) } // 20-50%
+            }
         } else {
             String(bytes, Charsets.ISO_8859_1)
         }
         onProgress(50)
-        if (contentText.isBlank()) throw AIParseException(context.getString(R.string.error_ai_no_geometry))
+        if (contentText.isBlank()) {
+            throw AIParseException(context.getString(if (isPdfFile) R.string.error_pdf_no_geometry else R.string.error_ai_no_geometry))
+        }
 
         val model = parseContentStream(contentText) { p -> onProgress(50 + (p * 40) / 100) } // 50-90%
-        if (model.lines.isEmpty()) throw AIParseException(context.getString(R.string.error_ai_no_geometry))
+        if (model.lines.isEmpty()) {
+            throw AIParseException(context.getString(if (isPdfFile) R.string.error_pdf_no_geometry else R.string.error_ai_no_geometry))
+        }
         onProgress(90)
         return model
     }
@@ -241,7 +265,9 @@ object AIParser {
 
     /** بيدوّر على كل الـ Streams في ملف الـ PDF، يفك ضغطها (لو FlateDecode)، وبيفلتر
      * بس اللي شكلها فعليًا أوامر رسم (مش صور/خطوط مضمّنة) — طريقة عملية بدل تحليل
-     * بنية PDF الكاملة. كافي لملفات AI عادية بلوحة رسم واحدة. */
+     * بنية PDF الكاملة. كافي لملفات Illustrator عادية بلوحة رسم واحدة. مستخدمة
+     * لملفات .ai — لملفات .pdf شوف [extractFirstPageContentStreams] (بتاخد صفحة
+     * واحدة بس، وده الفرق الجوهري بين الاتنين). */
     private fun extractPdfContentStreams(bytes: ByteArray, onProgress: (Int) -> Unit = {}): String {
         val text = StringBuilder()
         val latin = String(bytes, Charsets.ISO_8859_1) // تحويل حرف-لبايت 1:1 بلا فقدان، مش ترميز نصي حقيقي
@@ -276,6 +302,63 @@ object AIParser {
             searchFrom = endIdx + 9
         }
         return text.toString()
+    }
+
+    /** نسخة "الصفحة الأولى بس" — مخصوصة لملفات .pdf عادية (زي ما طلب Amr: العميل
+     * محتاج يشوف ويقيس بس، مش تعامل احترافي مع كل صفحات ملف PDF). بتدوّر على أول
+     * كائن `/Type /Page` حقيقي (مش `/Type /Pages` — ده كائن شجرة الصفحات نفسه مش
+     * صفحة)، وتاخد الـ Content Stream(s) المرتبطة بيه بس عن طريق تتبّع مرجع
+     * `/Contents` (سواء كان مرجع واحد أو Array مراجع لأكتر من Stream للصفحة نفسها).
+     *
+     * لو الملف معقّد بشكل غير متوقع (بنية PDF غريبة، xref stream، إلخ) ومعرفناش
+     * نلاقي صفحة بالطريقة الدقيقة دي، بنرجع تلقائيًا لنفس أسلوب المسح الشامل
+     * المستخدم لملفات AI — أفضل بكتير من رسالة خطأ فورية لملف المستخدم غالبًا
+     * محتاج يفتحه، حتى لو النتيجة مش مضمونة تكون صفحة واحدة بالظبط في الحالة دي. */
+    private fun extractFirstPageContentStreams(bytes: ByteArray, onProgress: (Int) -> Unit = {}): String {
+        val latin = String(bytes, Charsets.ISO_8859_1)
+
+        val pageMatch = Regex("/Type\\s*/Page(?!s)\\b").find(latin)
+            ?: return extractPdfContentStreams(bytes, onProgress) // مفيش /Type /Page واضح — رجوع للطريقة الشاملة
+
+        val dictStart = latin.lastIndexOf("obj", pageMatch.range.first).let { if (it < 0) 0 else it }
+        val dictEnd = latin.indexOf("endobj", pageMatch.range.first).let { if (it < 0) latin.length else it }
+        if (dictEnd <= dictStart) return extractPdfContentStreams(bytes, onProgress)
+        val pageDictText = latin.substring(dictStart, dictEnd)
+
+        // /Contents ممكن يكون مرجع واحد "5 0 R" أو Array مراجع "[5 0 R 6 0 R]"
+        val contentsMatch = Regex("/Contents\\s*(\\[([^\\]]*)\\]|(\\d+)\\s+\\d+\\s+R)").find(pageDictText)
+            ?: return extractPdfContentStreams(bytes, onProgress)
+        val arrPart = contentsMatch.groupValues[2]
+        val singlePart = contentsMatch.groupValues[3]
+        val objectNumbers = mutableListOf<Int>()
+        if (arrPart.isNotBlank()) {
+            Regex("(\\d+)\\s+\\d+\\s+R").findAll(arrPart).forEach { objectNumbers.add(it.groupValues[1].toInt()) }
+        } else if (singlePart.isNotBlank()) {
+            objectNumbers.add(singlePart.toInt())
+        }
+        if (objectNumbers.isEmpty()) return extractPdfContentStreams(bytes, onProgress)
+
+        val text = StringBuilder()
+        for ((idx, objNum) in objectNumbers.withIndex()) {
+            onProgress(((idx + 1) * 100) / objectNumbers.size)
+            val objMatch = Regex("(?m)^\\s*$objNum\\s+\\d+\\s+obj\\b").find(latin) ?: continue
+            val streamIdx = latin.indexOf("stream", objMatch.range.last)
+            if (streamIdx < 0) continue
+            val objDictText = latin.substring(objMatch.range.last, streamIdx) // ديكشنري الكائن ده بس، مش أي 400 حرف عشوائي
+            val isFlate = objDictText.contains("FlateDecode")
+
+            var dataStart = streamIdx + 6
+            if (dataStart < latin.length && latin[dataStart] == '\r') dataStart++
+            if (dataStart < latin.length && latin[dataStart] == '\n') dataStart++
+            val endIdx = latin.indexOf("endstream", dataStart)
+            if (endIdx < 0) continue
+            val rawStreamBytes = bytes.copyOfRange(dataStart, endIdx.coerceAtMost(bytes.size))
+
+            val decoded = if (isFlate) inflate(rawStreamBytes) else rawStreamBytes
+            if (decoded != null) text.append(String(decoded, Charsets.ISO_8859_1)).append('\n')
+        }
+        // لو مفيش أي Stream اتقرا فعليًا (مثلاً كل الـ objects كانت مش لاقيينها)، رجوع للطريقة الشاملة كملاذ أخير
+        return if (text.isBlank()) extractPdfContentStreams(bytes, onProgress) else text.toString()
     }
 
     private fun inflate(data: ByteArray): ByteArray? {
