@@ -69,12 +69,43 @@ class DXF2DView @JvmOverloads constructor(
     var measureModeOn = false
         set(value) {
             field = value
-            if (!value) { measureP1 = null; measureP2 = null }
+            if (!value) { measureP1 = null; measureP2 = null; isDragPlacing = false }
             invalidate()
         }
     var onDistanceMeasured: ((Float) -> Unit)? = null
     private var measureP1: FloatArray? = null // [worldX, worldY]
     private var measureP2: FloatArray? = null
+
+    // ── وضع "اللمس المستمر" (Long-press) لوضع نقطة بدقة — اقتراح Amr بناءً على
+    // تطبيقات تانية: بدل اللمسة السريعة العادية (لسه شغالة برضه للسرعة)، اللمس
+    // المستمر بيفعّل خط بيتحرك Live مع الإصبع + شاشة تكبير صغيرة فوق الإصبع
+    // (مش تحت) عشان الإصبع نفسه مايحجبش مكان النقطة وقت وضعها بدقة. ──
+    private var isDragPlacing = false
+    private var dragLiveWorld: FloatArray? = null
+    private var dragScreenX = 0f
+    private var dragScreenY = 0f
+
+    private val magnifierBgPaint = Paint().apply {
+        color = Color.parseColor("#F0101216")
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+    private val magnifierBorderPaint = Paint().apply {
+        color = Color.parseColor("#FF8A1E")
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+        isAntiAlias = true
+    }
+    private val magnifierCrosshairPaint = Paint().apply {
+        color = Color.parseColor("#FF2F3A")
+        strokeWidth = 3f
+        isAntiAlias = true
+    }
+    private val magnifierLinePaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f
+        isAntiAlias = true
+    }
 
     private val defaultPaint = Paint().apply {
         color = Color.parseColor("#00E5FF")
@@ -194,39 +225,66 @@ class DXF2DView @JvmOverloads constructor(
             }
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (measureModeOn) {
-                    handleMeasureTap(e.x, e.y)
+                    commitMeasurePoint(resolveWorldPoint(e.x, e.y))
                     return true
                 }
                 return false
             }
+            override fun onLongPress(e: MotionEvent) {
+                // بداية "اللمس المستمر" — بيفعّل خط بيتحرك Live + شاشة تكبير فوق
+                // الإصبع، لحد ما المستخدم يرفع إصبعه (شوف onTouchEvent تحت)
+                if (measureModeOn) {
+                    isDragPlacing = true
+                    updateDragPreview(e.x, e.y)
+                }
+            }
         })
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (measureModeOn && isDragPlacing) {
+            // بعد ما اللمس المستمر يتفعّل، بنتولى تتبّع الحركة يدويًا (مش عن طريق
+            // GestureDetector) عشان نمنع الـ Pan من "يخطف" اللمسة أثناء وضع النقطة
+            when (event.actionMasked) {
+                MotionEvent.ACTION_MOVE -> updateDragPreview(event.x, event.y)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (event.actionMasked == MotionEvent.ACTION_UP) {
+                        updateDragPreview(event.x, event.y)
+                        dragLiveWorld?.let { commitMeasurePoint(it) }
+                    }
+                    isDragPlacing = false
+                    dragLiveWorld = null
+                    invalidate()
+                }
+            }
+            return true
+        }
         scaleDetector.onTouchEvent(event)
         gestureDetector.onTouchEvent(event)
         return true
     }
 
-    private fun handleMeasureTap(screenX: Float, screenY: Float) {
-        // نحاول نلتقط أقرب نقطة حقيقية في الرسمة (نهاية خط / مركز دايرة أو قوس) بدل الاعتماد
-        // على دقة إصبع المستخدم فقط — بالظبط زي أدوات الـ Snap في برامج الـ CAD
-        val snapped = findSnapPoint(screenX, screenY)
-        val worldX: Float
-        val worldY: Float
-        if (snapped != null) {
-            worldX = snapped[0]
-            worldY = snapped[1]
-        } else {
-            worldX = (screenX - offsetX) / scale
-            worldY = -(screenY - offsetY) / scale
-        }
+    /** بيحدّث نقطة المعاينة الحية أثناء اللمس المستمر — بيلتقط أقرب نقطة حقيقية
+     * زي اللمسة السريعة العادية بالظبط، بس بيتحدّث باستمرار مع حركة الإصبع */
+    private fun updateDragPreview(screenX: Float, screenY: Float) {
+        dragScreenX = screenX; dragScreenY = screenY
+        dragLiveWorld = resolveWorldPoint(screenX, screenY)
+        invalidate()
+    }
 
+    /** بيرجّع أقرب نقطة التقاط حقيقية (نهاية خط/مركز دايرة أو قوس) لو موجودة قريب
+     * كفاية من مكان اللمس، وإلا الموضع الخام المحوّل لفراغ الموديل مباشرة */
+    private fun resolveWorldPoint(screenX: Float, screenY: Float): FloatArray {
+        val snapped = findSnapPoint(screenX, screenY)
+        return snapped ?: floatArrayOf(screenToWorldX(screenX), screenToWorldY(screenY))
+    }
+
+    private fun commitMeasurePoint(world: FloatArray) {
         if (measureP1 == null || (measureP1 != null && measureP2 != null)) {
             // بداية قياس جديد
-            measureP1 = floatArrayOf(worldX, worldY)
+            measureP1 = world
             measureP2 = null
         } else {
-            measureP2 = floatArrayOf(worldX, worldY)
+            measureP2 = world
             val p1 = measureP1!!
             val p2 = measureP2!!
             val distMm = hypot((p2[0] - p1[0]).toDouble(), (p2[1] - p1[1]).toDouble()).toFloat()
@@ -546,81 +604,119 @@ class DXF2DView @JvmOverloads constructor(
         }
     }
 
-    private val snapDotPaint = Paint().apply {
-        color = Color.parseColor("#66FFFFFF")
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
-
     private fun drawMeasurement(canvas: Canvas) {
-        // ⚠️ إصلاح جذري تاني (بلاغ Amr: "بيهنج لما بضغط على القياس"): بدل ما نمشي
-        // على كل نقاط الالتقاط في الملف (ممكن توصل لمئات الآلاف) في كل فريم رسم،
-        // بنستعلم بس عن خلايا الفهرس المكاني (snapGrid) اللي متقاطعة فعليًا مع
-        // حدود الشاشة الحالية — عدد النقاط المفحوصة بقى متناسب مع "اللي بيتعرض
-        // على الشاشة"، مش "حجم الملف كله". شوف شرح snapGrid فوق لتفاصيل أكتر.
-        if (measureModeOn && snapGrid.isNotEmpty()) {
-            val margin = 40f
-            val wx1 = screenToWorldX(-margin); val wy1 = screenToWorldY(-margin)
-            val wx2 = screenToWorldX(width + margin); val wy2 = screenToWorldY(height + margin)
-            val worldMinX = minOf(wx1, wx2); val worldMaxX = maxOf(wx1, wx2)
-            val worldMinY = minOf(wy1, wy2); val worldMaxY = maxOf(wy1, wy2)
+        val p1 = measureP1
+        if (p1 != null) {
+            val sx1 = toScreenX(p1[0]); val sy1 = toScreenY(p1[1])
+            canvas.drawCircle(sx1, sy1, 10f, measurePointPaint)
 
-            val cellMinX = ((worldMinX - snapGridMinX) / snapGridCellSize).toInt()
-            val cellMaxX = ((worldMaxX - snapGridMinX) / snapGridCellSize).toInt()
-            val cellMinY = ((worldMinY - snapGridMinY) / snapGridCellSize).toInt()
-            val cellMaxY = ((worldMaxY - snapGridMinY) / snapGridCellSize).toInt()
-
-            for (cx in cellMinX..cellMaxX) {
-                for (cy in cellMinY..cellMaxY) {
-                    val key = (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
-                    val bucket = snapGrid[key] ?: continue
-                    for (p in bucket) {
-                        canvas.drawCircle(toScreenX(p[0]), toScreenY(p[1]), 5f, snapDotPaint)
-                    }
+            val p2 = measureP2
+            if (p2 != null) {
+                // قياس مكتمل — خط نهائي بين النقطتين
+                val sx2 = toScreenX(p2[0]); val sy2 = toScreenY(p2[1])
+                canvas.drawCircle(sx2, sy2, 10f, measurePointPaint)
+                drawMeasureLine(canvas, sx1, sy1, sx2, sy2, p1, p2)
+            } else if (isDragPlacing) {
+                // ⚠️ اقتراح Amr (بناءً على تطبيقات تانية): أثناء اللمس المستمر بعد
+                // وضع النقطة الأولى، الخط بيتحرك Live مع الإصبع لحد ما يرفعه —
+                // بيسهّل ضبط النقطة التانية بدقة قبل ما تتثبّت فعليًا
+                dragLiveWorld?.let { live ->
+                    val sxLive = toScreenX(live[0]); val syLive = toScreenY(live[1])
+                    drawMeasureLine(canvas, sx1, sy1, sxLive, syLive, p1, live)
                 }
             }
         }
 
-        val p1 = measureP1 ?: return
-        val sx1 = toScreenX(p1[0]); val sy1 = -p1[1] * scale + offsetY
-        canvas.drawCircle(sx1, sy1, 10f, measurePointPaint)
-
-        val p2 = measureP2
-        if (p2 != null) {
-            val sx2 = toScreenX(p2[0]); val sy2 = -p2[1] * scale + offsetY
-            canvas.drawCircle(sx2, sy2, 10f, measurePointPaint)
-            canvas.drawLine(sx1, sy1, sx2, sy2, measureLinePaint)
-
-            // بنفترض إن وحدات الرسمة الخام هي مم (نفس افتراض عارض الـ STL بالظبط)،
-            // وبنحوّلها لعرض حسب الوحدة المختارة (مم/سم/بوصة) بدل رقم خام من غير وحدة
-            val distMm = hypot((p2[0] - p1[0]).toDouble(), (p2[1] - p1[1]).toDouble()).toFloat()
-            val displayDist = distMm * currentUnit.factorFromMm
-            val midX = (sx1 + sx2) / 2f
-            val midY = (sy1 + sy2) / 2f
-            val label = "%.2f %s".format(displayDist, resources.getString(currentUnit.labelRes))
-
-            // ── إبعاد النص عن الخط نفسه عمودي على اتجاهه (مش إزاحة قطرية ثابتة) عشان
-            // يفضل واضح مهما كانت زاوية الخط، بمسافة أكبر من قبل، بالإضافة لخلفية
-            // خفيفة وراءه تضمن وضوحه حتى لو وقع فوق تفصيلة تانية في الرسمة ──
-            val lineDx = sx2 - sx1; val lineDy = sy2 - sy1
-            val lineLen = hypot(lineDx.toDouble(), lineDy.toDouble()).toFloat().let { if (it < 1f) 1f else it }
-            var perpX = -lineDy / lineLen
-            var perpY = lineDx / lineLen
-            if (perpY > 0f) { perpX = -perpX; perpY = -perpY } // دايمًا لفوق في الشاشة، مش عشوائي حسب اتجاه الخط
-            val labelOffset = 34f
-            val labelX = midX + perpX * labelOffset
-            val labelY = midY + perpY * labelOffset
-
-            val textWidth = measureTextPaint.measureText(label)
-            val fm = measureTextPaint.fontMetrics
-            val padH = 10f; val padV = 6f
-            canvas.drawRoundRect(
-                labelX - textWidth / 2f - padH, labelY + fm.ascent - padV,
-                labelX + textWidth / 2f + padH, labelY + fm.descent + padV,
-                8f, 8f, measureLabelBgPaint
-            )
-            canvas.drawText(label, labelX - textWidth / 2f, labelY, measureTextPaint)
+        // شاشة التكبير فوق الإصبع أثناء اللمس المستمر — بتوضح مكان النقطة اللي
+        // هتتحدد بدقة، لأن الإصبع نفسه بيحجب المكان ده مباشرة على الشاشة العادية
+        if (isDragPlacing) {
+            dragLiveWorld?.let { live -> drawMagnifier(canvas, dragScreenX, dragScreenY, live[0], live[1]) }
         }
+    }
+
+    /** رسم خط قياس (نهائي أو معاينة حية أثناء السحب) + تسمية الطول — دالة مشتركة
+     * عشان منكررش نفس منطق إبعاد النص عن الخط مرتين */
+    private fun drawMeasureLine(canvas: Canvas, sx1: Float, sy1: Float, sx2: Float, sy2: Float, w1: FloatArray, w2: FloatArray) {
+        canvas.drawLine(sx1, sy1, sx2, sy2, measureLinePaint)
+
+        // بنفترض إن وحدات الرسمة الخام هي مم (نفس افتراض عارض الـ STL بالظبط)،
+        // وبنحوّلها لعرض حسب الوحدة المختارة (مم/سم/بوصة) بدل رقم خام من غير وحدة
+        val distMm = hypot((w2[0] - w1[0]).toDouble(), (w2[1] - w1[1]).toDouble()).toFloat()
+        val displayDist = distMm * currentUnit.factorFromMm
+        val midX = (sx1 + sx2) / 2f
+        val midY = (sy1 + sy2) / 2f
+        val label = "%.2f %s".format(displayDist, resources.getString(currentUnit.labelRes))
+
+        // ── إبعاد النص عن الخط نفسه عمودي على اتجاهه (مش إزاحة قطرية ثابتة) عشان
+        // يفضل واضح مهما كانت زاوية الخط، بمسافة أكبر من قبل، بالإضافة لخلفية
+        // خفيفة وراءه تضمن وضوحه حتى لو وقع فوق تفصيلة تانية في الرسمة ──
+        val lineDx = sx2 - sx1; val lineDy = sy2 - sy1
+        val lineLen = hypot(lineDx.toDouble(), lineDy.toDouble()).toFloat().let { if (it < 1f) 1f else it }
+        var perpX = -lineDy / lineLen
+        var perpY = lineDx / lineLen
+        if (perpY > 0f) { perpX = -perpX; perpY = -perpY } // دايمًا لفوق في الشاشة، مش عشوائي حسب اتجاه الخط
+        val labelOffset = 34f
+        val labelX = midX + perpX * labelOffset
+        val labelY = midY + perpY * labelOffset
+
+        val textWidth = measureTextPaint.measureText(label)
+        val fm = measureTextPaint.fontMetrics
+        val padH = 10f; val padV = 6f
+        canvas.drawRoundRect(
+            labelX - textWidth / 2f - padH, labelY + fm.ascent - padV,
+            labelX + textWidth / 2f + padH, labelY + fm.descent + padV,
+            8f, 8f, measureLabelBgPaint
+        )
+        canvas.drawText(label, labelX - textWidth / 2f, labelY, measureTextPaint)
+    }
+
+    /** شاشة تكبير صغيرة عائمة فوق مكان اللمس (مش تحته) — بترسم نسخة مكبّرة من
+     * نفس محتوى الرسمة حوالين نقطة الالتقاط الحالية، مع علامة + في النص توضح
+     * بالظبط فين هتتحدد النقطة. الغرض: إصبع المستخدم بيحجب المكان بالظبط وقت
+     * اللمس، فمن غيرها صعب يضبط النقطة بدقة على شاشة موبايل صغيرة. */
+    private fun drawMagnifier(canvas: Canvas, touchX: Float, touchY: Float, worldX: Float, worldY: Float) {
+        val density = resources.displayMetrics.density
+        val radius = 62f * density
+        val gap = 34f * density // مسافة فوق الإصبع عشان مايتحجبش
+        val magCenterX = touchX.coerceIn(radius, width - radius)
+        val magCenterY = (touchY - radius - gap).coerceAtLeast(radius)
+        val zoom = 3.5f
+        val magScale = scale * zoom
+
+        canvas.save()
+        val clipPath = android.graphics.Path().apply {
+            addCircle(magCenterX, magCenterY, radius, android.graphics.Path.Direction.CW)
+        }
+        canvas.clipPath(clipPath)
+        canvas.drawCircle(magCenterX, magCenterY, radius, magnifierBgPaint)
+
+        for ((color, modelCoords) in lineColorGroups) {
+            val magCoords = FloatArray(modelCoords.size)
+            var i = 0
+            while (i < modelCoords.size) {
+                magCoords[i] = magCenterX + (modelCoords[i] - worldX) * magScale
+                magCoords[i + 1] = magCenterY - (modelCoords[i + 1] - worldY) * magScale
+                i += 2
+            }
+            magnifierLinePaint.color = color
+            canvas.drawLines(magCoords, magnifierLinePaint)
+        }
+
+        model?.circles?.forEach { c ->
+            if (!isLayerVisible(c.layer)) return@forEach
+            magnifierLinePaint.color = c.color
+            canvas.drawCircle(
+                magCenterX + (c.cx - worldX) * magScale,
+                magCenterY - (c.cy - worldY) * magScale,
+                c.r * magScale, magnifierLinePaint
+            )
+        }
+
+        canvas.restore()
+
+        canvas.drawCircle(magCenterX, magCenterY, radius, magnifierBorderPaint)
+        canvas.drawLine(magCenterX - 16f, magCenterY, magCenterX + 16f, magCenterY, magnifierCrosshairPaint)
+        canvas.drawLine(magCenterX, magCenterY - 16f, magCenterX, magCenterY + 16f, magnifierCrosshairPaint)
     }
 
     /** شبكة خفيفة + محاور X/Y زي شاشة الرسم بالأوتوكاد */
