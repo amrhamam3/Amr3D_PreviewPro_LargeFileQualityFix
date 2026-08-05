@@ -110,6 +110,9 @@
                 android:buttonTint="@color/accent_orange" android:checked="true" android:layout_marginEnd="10dp" />
             <CheckBox android:id="@+id/cbFilterAi" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="📐 AI" android:textColor="@color/text_primary" android:textSize="12sp"
+                android:buttonTint="@color/accent_orange" android:checked="true" android:layout_marginEnd="10dp" />
+            <CheckBox android:id="@+id/cbFilterPdf" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="📐 PDF" android:textColor="@color/text_primary" android:textSize="12sp"
                 android:buttonTint="@color/accent_orange" android:checked="true" />
         </LinearLayout>
 
