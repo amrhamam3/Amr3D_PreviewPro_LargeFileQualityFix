@@ -27,6 +27,10 @@ class DXF2DView @JvmOverloads constructor(
     val currentModel: DxfModel? get() = model
     private var snapPoints: List<FloatArray> = emptyList() // كل نقاط النهايات/المراكز القابلة للالتقاط [x, y]
 
+    // شاشة القياسات والكثافة
+    private val density = resources.displayMetrics.density
+    private val scaledDensity = resources.displayMetrics.scaledDensity
+
     /** ⚠️ نفس فلسفة إصلاح الخطوط بالظبط (شوف lineColorGroups فوق) — بلاغ Amr:
      * "بيهنج لما بضغط على القياس". السبب: drawMeasurement() كان بيعمل loop على
      * **كل** نقاط الالتقاط (ممكن توصل لمئات الآلاف في ملف تقيل) في كل فريم
@@ -39,7 +43,8 @@ class DXF2DView @JvmOverloads constructor(
     private var snapGridCellSize = 1f
     private var snapGridMinX = 0f
     private var snapGridMinY = 0f
-    private val snapRadiusPx = 45f // نصف قطر الالتقاط بالبكسل — لو التاتش قريب من نقطة حقيقية بيلتصق بيها
+    private val snapRadiusDp = 12f
+    private var snapRadiusPx = snapRadiusDp * density // نصف قطر الالتقاط بالبكسل — محسوب على density
 
     // ══ إخفاء/إظهار الطبقات (Layers) ══
     // بيحتوي على أسماء الطبقات المخفية فقط — أي طبقة مش موجودة هنا معناها ظاهرة (الحالة الافتراضية)
@@ -50,8 +55,7 @@ class DXF2DView @JvmOverloads constructor(
      * canvas.drawLine() **مرة واحدة لكل خط لوحده** جوه onDraw() — يعني لملف فيه
      * 50 ألف خط (شائع جدًا في DXF/AI حقيقية، خصوصًا بعد تفليح منحنيات AI)، كان
      * بيعمل 50 ألف نداء منفصل لـ Canvas **في كل فريم واحد** (60 مرة في الثانية
-     * وقت أي سحب/تكبير) — تكلفة نداء Canvas مش صفر حتى مع تسريع الهاردوير،
-     * فمضاعَفة بالعدد ده كانت كافية تعلّق التطبيق تمامًا.
+     * وقت أي سحب/تكبير) — تكلفة نداء Canvas مش صفر حتى مع تسريع الهاردوير، فمضاعَفة بالعدد ده كانت كافية تعلّق التطبيق تمامًا.
      *
      * الحل: تجميع كل الخطوط (والأقواس بعد تفليحها لخطوط قصيرة) حسب اللون في
      * مصفوفة واحدة مسطّحة لكل لون (Cache)، تتبني مرة واحدة بس لما الموديل
@@ -86,11 +90,14 @@ class DXF2DView @JvmOverloads constructor(
 
     /** نصف قطر نقطة القياس المرسومة — بيكبر أثناء الضغط ويرجع لحجمه الطبيعي فور
      * الرفع (تحسين وضوح، اقتراح Amr)، بحركة سلسة بدل قفزة فجائية. */
-    private var pointRadiusPx = 10f
+    private val basePointRadiusDp = 4f
+    private var pointRadiusPx = basePointRadiusDp * density
     private var pointRadiusAnimator: android.animation.ValueAnimator? = null
     private fun animatePointRadius(grow: Boolean) {
         pointRadiusAnimator?.cancel()
-        pointRadiusAnimator = android.animation.ValueAnimator.ofFloat(pointRadiusPx, if (grow) 16f else 10f).apply {
+        val targetSmall = basePointRadiusDp * density
+        val targetLarge = (basePointRadiusDp + 4f) * density // نمو معقول عند الضغط
+        pointRadiusAnimator = android.animation.ValueAnimator.ofFloat(pointRadiusPx, if (grow) targetLarge else targetSmall).apply {
             duration = if (grow) 90 else 180
             addUpdateListener { pointRadiusPx = it.animatedValue as Float; invalidate() }
             start()
@@ -121,17 +128,17 @@ class DXF2DView @JvmOverloads constructor(
     private val magnifierBorderPaint = Paint().apply {
         color = Color.parseColor("#FF8A1E")
         style = Paint.Style.STROKE
-        strokeWidth = 4f
+        strokeWidth = 4f * density
         isAntiAlias = true
     }
     private val magnifierCrosshairPaint = Paint().apply {
         color = Color.parseColor("#FF2F3A")
-        strokeWidth = 3f
+        strokeWidth = 3f * density
         isAntiAlias = true
     }
     private val magnifierLinePaint = Paint().apply {
         style = Paint.Style.STROKE
-        strokeWidth = 2.5f
+        strokeWidth = 2.5f * density
         isAntiAlias = true
     }
 
@@ -154,7 +161,7 @@ class DXF2DView @JvmOverloads constructor(
 
     /** بيغيّر لون خلفية عارض الـ DXF — بديل عن الأبيض الافتراضي في أي ثيم فاتح مستقبلي،
      * ومهم برضو عشان ألوان بعض العناصر (زي الأبيض أو الأصفر من AciColors) بتفضل واضحة
-     * بس على خلفيات غامقة؛ فبنسيب الاختيار للمستخدم بدل ما نفرض خلفية بيضا ممكن تخفي رسمته.
+     * بس على خلفيات غامقة اللون؛ فبنسيب الاختيار للمستخدم بدل ما نفرض خلفية بيضا ممكن تخفي رسمته.
      * وعشان الشبكة (Grid) والمحاور تفضل واضحة أيًا كان اللون المختار، بنلوّنهم تلقائيًا
      * حسب سطوع الخلفية (فاتحة → خطوط غامقة، غامقة → خطوط فاتحة) بدل ما نسيبهم لون ثابت.
      * ملحوظة: الاسم `setDxfBackgroundColor` مش `setBackgroundColor` عشان الاسم التاني
@@ -171,13 +178,13 @@ class DXF2DView @JvmOverloads constructor(
 
     private val gridPaint = Paint().apply {
         color = Color.parseColor("#1A1F26")
-        strokeWidth = 1.5f
+        strokeWidth = 1.5f * density
         isAntiAlias = false
     }
 
     private val axisPaint = Paint().apply {
         color = Color.parseColor("#3A4048")
-        strokeWidth = 2.5f
+        strokeWidth = 2.5f * density
         isAntiAlias = true
     }
 
@@ -189,10 +196,10 @@ class DXF2DView @JvmOverloads constructor(
 
     private val measureLinePaint = Paint().apply {
         color = Color.parseColor("#FF8A1E")
-        strokeWidth = 3f
+        strokeWidth = 3f * density
         style = Paint.Style.STROKE
         isAntiAlias = true
-        pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f, 8f), 0f)
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f * density, 8f * density), 0f)
     }
 
     /** وحدة القياس الحالية (مم/سم/بوصة) — بتتحدث من ViewerFragment كل ما المستخدم يغيّرها
@@ -200,9 +207,10 @@ class DXF2DView @JvmOverloads constructor(
      * ثلاثي الأبعاد بدل ما يعرض رقم خام من غير وحدة واضحة. */
     var currentUnit: MeasurementUnit = MeasurementUnit.MM
 
+    private val measureTextSizeSp = 14f
     private val measureTextPaint = Paint().apply {
         color = Color.parseColor("#FF8A1E")
-        textSize = 46f
+        textSize = measureTextSizeSp * scaledDensity // بدل 46f خام
         isAntiAlias = true
         isFakeBoldText = true
     }
@@ -464,7 +472,7 @@ class DXF2DView @JvmOverloads constructor(
 
     /** عدد المسارات القابلة للقطع الظاهرة حاليًا (كل خط/قوس/دائرة = مسار منفصل
      * تقريبًا) — مؤشر تقريبي لعدد مرات "الدخول" اللي ماكينة الليزر هتحتاجها،
-     * مفيد للتسعير التقريبي حتى لو مفيش سرعة قطع معروفة لحساب وقت فعلي. */
+     * مفيد للتسعير التقريبي حتى لو مافيش سرعة قطع معروفة لحساب وقت فعلي. */
     fun visibleCuttableEntityCount(): Int {
         val m = model ?: return 0
         return m.lines.count { isLayerVisible(it.layer) } +
@@ -505,30 +513,45 @@ class DXF2DView @JvmOverloads constructor(
 
     /** بيبني snapGrid من snapPoints الحالية — حجم الخلية محسوب عشان يدّي تقريبًا
      * عدد خلايا يساوي عدد النقاط (شبكة متوازنة، نفس فلسفة sqrt(n) المستخدمة في
-     * أماكن تانية بالمشروع زي MeshIntegrityChecker). */
+     * أماكن تانية بالمشروع زي MeshIntegrityChecker). الحوسبة الثقيلة بتحصل في Thread */
     private fun buildSnapGrid() {
         val pts = snapPoints
         if (pts.isEmpty()) { snapGrid = emptyMap(); return }
 
-        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
-        for (p in pts) {
-            if (p[0] < minX) minX = p[0]; if (p[1] < minY) minY = p[1]
-            if (p[0] > maxX) maxX = p[0]; if (p[1] > maxY) maxY = p[1]
-        }
-        val diag = hypot((maxX - minX).toDouble(), (maxY - minY).toDouble()).toFloat().coerceAtLeast(1e-3f)
-        val cellsPerAxis = maxOf(4, kotlin.math.ceil(kotlin.math.sqrt(pts.size.toDouble())).toInt())
-        snapGridCellSize = (diag / cellsPerAxis).coerceAtLeast(1e-4f)
-        snapGridMinX = minX; snapGridMinY = minY
+        // نعمل نسخة للبيانات عشان نستخدمها في الـ Thread بأمان
+        val ptsCopy = ArrayList<FloatArray>(pts)
 
-        val buckets = HashMap<Long, MutableList<FloatArray>>()
-        for (p in pts) {
-            val cx = ((p[0] - minX) / snapGridCellSize).toInt()
-            val cy = ((p[1] - minY) / snapGridCellSize).toInt()
-            val key = (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
-            buckets.getOrPut(key) { ArrayList() }.add(p)
-        }
-        snapGrid = buckets
+        Thread {
+            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+            var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+            for (p in ptsCopy) {
+                if (p[0] < minX) minX = p[0]; if (p[1] < minY) minY = p[1]
+                if (p[0] > maxX) maxX = p[0]; if (p[1] > maxY) maxY = p[1]
+            }
+            val diag = hypot((maxX - minX).toDouble(), (maxY - minY).toDouble()).toFloat().coerceAtLeast(1e-3f)
+            val cellsPerAxis = maxOf(4, kotlin.math.ceil(kotlin.math.sqrt(ptsCopy.size.toDouble())).toInt())
+            val cellSize = (diag / cellsPerAxis).coerceAtLeast(1e-4f)
+
+            val buckets = HashMap<Long, MutableList<FloatArray>>()
+            for (p in ptsCopy) {
+                val cx = ((p[0] - minX) / cellSize).toInt()
+                val cy = ((p[1] - minY) / cellSize).toInt()
+                val key = (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
+                buckets.getOrPut(key) { ArrayList() }.add(p)
+            }
+
+            // قم بتجهيز الخريطة النهائية (قابلة للقراءة من الـ UI)
+            val finalMap: Map<Long, List<FloatArray>> = buckets.mapValues { it.value.toList() }
+
+            // ارجع النتائج للـ UI thread وآمن متغيرات الحالة
+            post {
+                snapGridCellSize = cellSize
+                snapGridMinX = minX
+                snapGridMinY = minY
+                snapGrid = finalMap
+                invalidate()
+            }
+        }.start()
     }
 
     private fun cellKeyOf(worldX: Float, worldY: Float): Long {
@@ -614,11 +637,7 @@ class DXF2DView @JvmOverloads constructor(
 
         val m = model ?: return
 
-        // ── رسم كل الخطوط + الأقواس (بعد تفليحها) بنداء Canvas واحد لكل لون —
-        // شوف الشرح الكامل عند تعريف lineColorGroups فوق. بنحوّل الإحداثيات من
-        // فراغ الموديل لفراغ الشاشة هنا بس (شغل رخيص، مجرد ضرب وجمع)، والتكلفة
-        // الحقيقية اللي كانت بتسبب التعليق (نداء Canvas نفسه) بقت مرة واحدة لكل
-        // لون بدل مرة لكل خط. ──
+        // ── رسم كل الخطوط + الأقواس (بعد تفليحها) بنداء Canvas واحد لكل لون — 
         for ((color, modelCoords) in lineColorGroups) {
             val screenCoords = FloatArray(modelCoords.size)
             var i = 0
@@ -703,24 +722,24 @@ class DXF2DView @JvmOverloads constructor(
         val label = "%.2f %s".format(displayDist, resources.getString(currentUnit.labelRes))
 
         // ── إبعاد النص عن الخط نفسه عمودي على اتجاهه (مش إزاحة قطرية ثابتة) عشان
-        // يفضل واضح مهما كانت زاوية الخط، بمسافة أكبر من قبل، بالإضافة لخلفية
+        // يفضل واضح مهما كانت زاية الخط، بمسافة أكبر من قبل، بالإضافة لخلفية
         // خفيفة وراءه تضمن وضوحه حتى لو وقع فوق تفصيلة تانية في الرسمة ──
         val lineDx = sx2 - sx1; val lineDy = sy2 - sy1
         val lineLen = hypot(lineDx.toDouble(), lineDy.toDouble()).toFloat().let { if (it < 1f) 1f else it }
         var perpX = -lineDy / lineLen
         var perpY = lineDx / lineLen
         if (perpY > 0f) { perpX = -perpX; perpY = -perpY } // دايمًا لفوق في الشاشة، مش عشوائي حسب اتجاه الخط
-        val labelOffset = 34f
+        val labelOffset = 34f * density
         val labelX = midX + perpX * labelOffset
         val labelY = midY + perpY * labelOffset
 
         val textWidth = measureTextPaint.measureText(label)
         val fm = measureTextPaint.fontMetrics
-        val padH = 10f; val padV = 6f
+        val padH = 10f * density; val padV = 6f * density
         canvas.drawRoundRect(
             labelX - textWidth / 2f - padH, labelY + fm.ascent - padV,
             labelX + textWidth / 2f + padH, labelY + fm.descent + padV,
-            8f, 8f, measureLabelBgPaint
+            8f * density, 8f * density, measureLabelBgPaint
         )
         canvas.drawText(label, labelX - textWidth / 2f, labelY, measureTextPaint)
     }
@@ -730,7 +749,6 @@ class DXF2DView @JvmOverloads constructor(
      * العارض الفعلي (مش لون ثابت) عشان خطوط غامقة اللون تفضل واضحة لو المستخدم
      * مغيّر الخلفية لفاتحة، مع علامة + في النص توضح بالظبط فين هتتحدد النقطة. */
     private fun drawMagnifier(canvas: Canvas, worldX: Float, worldY: Float) {
-        val density = resources.displayMetrics.density
         val radius = 62f * density
         val margin = 16f * density
         val magCenterX = width - margin - radius
@@ -770,8 +788,8 @@ class DXF2DView @JvmOverloads constructor(
         canvas.restore()
 
         canvas.drawCircle(magCenterX, magCenterY, radius, magnifierBorderPaint)
-        canvas.drawLine(magCenterX - 16f, magCenterY, magCenterX + 16f, magCenterY, magnifierCrosshairPaint)
-        canvas.drawLine(magCenterX, magCenterY - 16f, magCenterX, magCenterY + 16f, magnifierCrosshairPaint)
+        canvas.drawLine(magCenterX - 16f * density, magCenterY, magCenterX + 16f * density, magCenterY, magnifierCrosshairPaint)
+        canvas.drawLine(magCenterX, magCenterY - 16f * density, magCenterX, magCenterY + 16f * density, magnifierCrosshairPaint)
     }
 
     /** شبكة خفيفة + محاور X/Y زي شاشة الرسم بالأوتوكاد */
