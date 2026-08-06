@@ -73,12 +73,35 @@ class DXF2DView @JvmOverloads constructor(
     var measureModeOn = false
         set(value) {
             field = value
-            if (!value) { measureP1 = null; measureP2 = null; isDragPlacing = false; dragLiveWorld = null }
+            if (!value) {
+                chainStartPoint = null
+                measureSegments.clear()
+                isDragPlacing = false
+                dragLiveWorld = null
+            }
             invalidate()
         }
     var onDistanceMeasured: ((Float) -> Unit)? = null
-    private var measureP1: FloatArray? = null // [worldX, worldY]
-    private var measureP2: FloatArray? = null
+
+    /** ⚠️ تعديل جوهري (طلب Amr): كان القياس زوج نقط بس (measureP1/measureP2) —
+     * أي نقطة تالتة كانت بتمسح القياس القديم بالكامل وتبدأ واحد جديد من الصفر
+     * ("إحساس القفزة" اللي اشتكى منه). دلوقتي القياس بقى **سلسلة (Chain)**:
+     * كل نقطة جديدة بتكمّل ضلع جديد من آخر نقطة اتحطت، والأضلاع القديمة بتفضل
+     * موجودة وقابلة للحذف الفردي (زرار × صغير جنب كل واحد) بدل ما تتمسح تلقائيًا.
+     * [chainStartPoint] هي نقطة بداية الضلع المعلّق حاليًا (null لو لسه مفيش
+     * ولا نقطة اتحطت أو آخر ضلع كمّل وبستنى نقطة جديدة تبدأ منها الضلع اللي بعده). */
+    private var chainStartPoint: FloatArray? = null
+
+    private data class MeasureSegment(val p1: FloatArray, val p2: FloatArray, val distMm: Float)
+    private val measureSegments = mutableListOf<MeasureSegment>()
+
+    /** نصف قطر زرار الحذف باللمس — أكبر شوية من نصف قطر الرسم البصري نفسه
+     * عشان يبقى سهل يتلمس بإصبع حتى لو مش دقيق 100% */
+    private val deleteButtonRadiusPx = 11f * density
+    private val deleteButtonTouchRadiusPx = 22f * density
+    /** مواقع أزرار الحذف على الشاشة (بتتحدث كل رسمة لأنها بتتغيّر مع الزوم/البان) —
+     * index بتاعها = index القياس المقابل في measureSegments */
+    private var deleteButtonScreenPositions: List<FloatArray> = emptyList()
 
     // ── وضع "اللمس المستمر" (Long-press) لوضع نقطة بدقة — الخط بيتحرك Live مع
     // الإصبع + شاشة تكبير ثابتة (مش تتبع الإصبع) فوق الشاشة، وقفل تلقائي على
@@ -89,14 +112,16 @@ class DXF2DView @JvmOverloads constructor(
     private var dragScreenY = 0f
 
     /** نصف قطر نقطة القياس المرسومة — بيكبر أثناء الضغط ويرجع لحجمه الطبيعي فور
-     * الرفع (تحسين وضوح، اقتراح Amr)، بحركة سلسة بدل قفزة فجائية. */
-    private val basePointRadiusDp = 4f
+     * الرفع (تحسين وضوح، اقتراح Amr)، بحركة سلسة بدل قفزة فجائية.
+     * ⚠️ تعديل (طلب Amr: "عاوز اكبر نقطة القياس قليلا اثناء ادراجها"): الحجم
+     * الأساسي والنمو أثناء الضغط زادوا شوية (كانوا basePointRadiusDp=4 ونمو +4 بس). */
+    private val basePointRadiusDp = 5f
     private var pointRadiusPx = basePointRadiusDp * density
     private var pointRadiusAnimator: android.animation.ValueAnimator? = null
     private fun animatePointRadius(grow: Boolean) {
         pointRadiusAnimator?.cancel()
         val targetSmall = basePointRadiusDp * density
-        val targetLarge = (basePointRadiusDp + 4f) * density // نمو معقول عند الضغط
+        val targetLarge = (basePointRadiusDp + 6f) * density // نمو أوضح عند الضغط
         pointRadiusAnimator = android.animation.ValueAnimator.ofFloat(pointRadiusPx, if (grow) targetLarge else targetSmall).apply {
             duration = if (grow) 90 else 180
             addUpdateListener { pointRadiusPx = it.animatedValue as Float; invalidate() }
@@ -110,7 +135,7 @@ class DXF2DView @JvmOverloads constructor(
     private val orthoSnapDegrees = 2.0
 
     private fun applyOrthoSnap(candidate: FloatArray): FloatArray {
-        val p1 = measureP1 ?: return candidate
+        val p1 = chainStartPoint ?: return candidate
         val dx = (candidate[0] - p1[0]).toDouble()
         val dy = (candidate[1] - p1[1]).toDouble()
         if (dx == 0.0 && dy == 0.0) return candidate
@@ -142,13 +167,10 @@ class DXF2DView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
-    // ⚠️ إصلاح (بلاغ Amr: "جودة الخط ضعيفة ورفيع نسبيًا"): كانت strokeWidth رقم
-    // بكسل خام ثابت (3f) من غير أي علاقة بكثافة الشاشة (density) — على شاشة
-    // عالية الكثافة (xxhdpi، density=3، شائعة جدًا في الموبايلات الحديثة)، 3
-    // بكسل خام بيبان فعليًا زي 1dp بس، يعني خط رفيع جدًا بصريًا. دلوقتي بيتحسب
-    // بالنسبة لكثافة الشاشة عشان يبان بنفس السمك المريح على أي جهاز، مع زيادة
-    // بسيطة في القيمة الأساسية (3f → 3.5dp) لوضوح أفضل، وStrokeCap.ROUND عشان
-    // نهايات/تقاطعات الخطوط تبان ناعمة مش حادة عند السمك الجديد.
+    // ⚠️ إصلاح (بلاغ Amr: "جودة الخط ضعيفة ورفيع نسبيًا" ثم "بقى عريض جدًا"):
+    // كانت strokeWidth رقم بكسل خام ثابت من غير أي علاقة بكثافة الشاشة، بعدين
+    // اتعدّلت لـ 3.5dp وطلعت تقيلة أوي — استقرت على 2.2dp كنقطة وسط: واضحة
+    // على أي جهاز (بفضل التحويل لـ density) من غير ما تكون تقيلة بصريًا.
     private val defaultPaint = Paint().apply {
         color = Color.parseColor("#00E5FF")
         strokeWidth = 2.2f * resources.displayMetrics.density
@@ -221,6 +243,20 @@ class DXF2DView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
+    /** زرار الحذف الصغير (×) جنب كل قياس — أحمر مميّز عن لون القياس نفسه
+     * (البرتقالي) عشان يبان بوضوح إنه إجراء مختلف (حذف) مش جزء من القياس */
+    private val deleteButtonPaint = Paint().apply {
+        color = Color.parseColor("#D8342A")
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+    private val deleteButtonXPaint = Paint().apply {
+        color = Color.WHITE
+        strokeWidth = 2f * density
+        strokeCap = Paint.Cap.ROUND
+        isAntiAlias = true
+    }
+
     /** هايلايت بسيط للفجوات الكبيرة نسبيًا (نتيجة DxfGapChecker) — إشارة بصرية
      * بحتة "في فجوة هنا"، مش تقرير دقيق (نفس فلسفة حواف الـ STL المفتوحة). */
     var showGapHighlight = false
@@ -269,6 +305,14 @@ class DXF2DView @JvmOverloads constructor(
             }
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (measureModeOn) {
+                    // ⚠️ لازم نفحص زرار الحذف الأول قبل أي تفسير تاني للمسة —
+                    // لو المستخدم بيحاول يحذف قياس قديم، متعاملوش كنقطة قياس جديدة
+                    val segIndex = findDeleteButtonAt(e.x, e.y)
+                    if (segIndex != null) {
+                        measureSegments.removeAt(segIndex)
+                        invalidate()
+                        return true
+                    }
                     animatePointRadius(true)
                     commitMeasurePoint(resolveWorldPoint(e.x, e.y))
                     animatePointRadius(false)
@@ -278,8 +322,9 @@ class DXF2DView @JvmOverloads constructor(
             }
             override fun onLongPress(e: MotionEvent) {
                 // بداية "اللمس المستمر" — بيفعّل خط بيتحرك Live + شاشة تكبير ثابتة،
-                // لحد ما المستخدم يرفع إصبعه (شوف onTouchEvent تحت)
-                if (measureModeOn) {
+                // لحد ما المستخدم يرفع إصبعه (شوف onTouchEvent تحت). مبيتفعّلش لو
+                // اللمسة كانت أصلاً على زرار حذف (كان هيعمل تكبير على الفاضي)
+                if (measureModeOn && findDeleteButtonAt(e.x, e.y) == null) {
                     isDragPlacing = true
                     animatePointRadius(true)
                     updateDragPreview(e.x, e.y)
@@ -323,6 +368,17 @@ class DXF2DView @JvmOverloads constructor(
         return true
     }
 
+    /** بيدوّر على زرار حذف قياس واقع تحت نقطة اللمس دي — null لو مفيش. نصف قطر
+     * اللمس (deleteButtonTouchRadiusPx) أكبر من الدايرة المرسومة فعليًا عشان
+     * يبقى سهل يتلمس بإصبع حتى لو مش دقيق 100%. */
+    private fun findDeleteButtonAt(screenX: Float, screenY: Float): Int? {
+        for ((index, pos) in deleteButtonScreenPositions.withIndex()) {
+            val d = hypot((pos[0] - screenX).toDouble(), (pos[1] - screenY).toDouble()).toFloat()
+            if (d <= deleteButtonTouchRadiusPx) return index
+        }
+        return null
+    }
+
     /** بيحدّث نقطة المعاينة الحية أثناء اللمس المستمر — بيلتقط أقرب نقطة حقيقية
      * زي اللمسة السريعة العادية بالظبط (+ قفل Ortho لو الزاوية قريبة من مستقيم) */
     private fun updateDragPreview(screenX: Float, screenY: Float) {
@@ -332,39 +388,43 @@ class DXF2DView @JvmOverloads constructor(
     }
 
     /** بيرجّع أقرب نقطة التقاط حقيقية (نهاية خط/مركز دايرة أو قوس) لو موجودة قريب
-     * كفاية من مكان اللمس، وإلا الموضع الخام المحوّل لفراغ الموديل — وفي الحالتين
-     * بيطبّق قفل Ortho لو في نقطة أولى محدّدة بالفعل وزاوية الخط قريبة من مستقيم */
+     * كفاية من مكان اللمس، وإلا الموضع الخام المحوّل لفراغ الموديل. قفل الـ Ortho
+     * بيتطبق بس لو النقطة **مش** ملتقطة على Vertex حقيقي — لو هي نقطة حقيقية
+     * فعلًا، بنسيبها زي ما هي بالظبط، عشان القياس يفضل دقيق 100% على نقط الرسمة
+     * الحقيقية بدل ما يتزحزح لأقرب زاوية 90° صدفة. */
     private fun resolveWorldPoint(screenX: Float, screenY: Float): FloatArray {
         val snapped = findSnapPoint(screenX, screenY)
-        val raw = snapped ?: floatArrayOf(screenToWorldX(screenX), screenToWorldY(screenY))
+        if (snapped != null) return snapped
+        val raw = floatArrayOf(screenToWorldX(screenX), screenToWorldY(screenY))
         return applyOrthoSnap(raw)
     }
 
+    /** بيسجّل نقطة قياس جديدة — أول نقطة بتفتح السلسلة، وأي نقطة بعدها بتكمّل
+     * ضلع جديد من آخر نقطة اتحطت (مش بتبدأ قياس جديد من الصفر). */
     private fun commitMeasurePoint(world: FloatArray) {
-        if (measureP1 == null || (measureP1 != null && measureP2 != null)) {
-            // بداية قياس جديد
-            measureP1 = world
-            measureP2 = null
+        val start = chainStartPoint
+        if (start == null) {
+            chainStartPoint = world
         } else {
-            measureP2 = world
-            val p1 = measureP1!!
-            val p2 = measureP2!!
-            val distMm = hypot((p2[0] - p1[0]).toDouble(), (p2[1] - p1[1]).toDouble()).toFloat()
-            val dist = distMm * currentUnit.factorFromMm
-            onDistanceMeasured?.invoke(dist)
+            val distMm = hypot((world[0] - start[0]).toDouble(), (world[1] - start[1]).toDouble()).toFloat()
+            measureSegments.add(MeasureSegment(start, world, distMm))
+            chainStartPoint = world
+            onDistanceMeasured?.invoke(distMm * currentUnit.factorFromMm)
         }
         invalidate()
     }
 
     fun clearMeasurement() {
-        measureP1 = null; measureP2 = null
+        chainStartPoint = null
+        measureSegments.clear()
         invalidate()
     }
 
     /** تحميل موديل DXF جديد — بيعمل ضبط تلقائي (fit to view) أول ما يتحمّل */
     fun setModel(m: DxfModel) {
         model = m
-        measureP1 = null; measureP2 = null
+        chainStartPoint = null
+        measureSegments.clear()
         hiddenLayers.clear() // كل الطبقات ظاهرة افتراضيًا مع أي ملف جديد
         showGapHighlight = false
         gapHighlightSegments = null
@@ -511,11 +571,20 @@ class DXF2DView @JvmOverloads constructor(
         buildSnapGrid()
     }
 
+    /** ⚠️ إصلاح (Race Condition حقيقي): الحساب بيحصل في Thread منفصل (شوف الشرح
+     * تحت)، ولو المستخدم غيّر الموديل/رؤية طبقة بسرعة (فيفتح Thread جديد قبل
+     * ما القديم يخلص)، مفيش أي ضمان إن القديم مش هيخلص **بعد** الجديد ويكتب
+     * فوقه بيانات قديمة بصمت (باگ نادر بس خطير لو حصل — قياس بيلتقط نقط من
+     * حالة سابقة). الحل: رقم تسلسلي (snapGridGeneration) بيزيد قبل كل Thread،
+     * وبنتأكد إن الـ Thread اللي بيكتب النتيجة لسه "الأحدث" وقت ما يخلص فعلًا. */
+    private var snapGridGeneration = 0
+
     /** بيبني snapGrid من snapPoints الحالية — حجم الخلية محسوب عشان يدّي تقريبًا
      * عدد خلايا يساوي عدد النقاط (شبكة متوازنة، نفس فلسفة sqrt(n) المستخدمة في
      * أماكن تانية بالمشروع زي MeshIntegrityChecker). الحوسبة الثقيلة بتحصل في Thread */
     private fun buildSnapGrid() {
         val pts = snapPoints
+        val myGeneration = ++snapGridGeneration
         if (pts.isEmpty()) { snapGrid = emptyMap(); return }
 
         // نعمل نسخة للبيانات عشان نستخدمها في الـ Thread بأمان
@@ -543,8 +612,10 @@ class DXF2DView @JvmOverloads constructor(
             // قم بتجهيز الخريطة النهائية (قابلة للقراءة من الـ UI)
             val finalMap: Map<Long, List<FloatArray>> = buckets.mapValues { it.value.toList() }
 
-            // ارجع النتائج للـ UI thread وآمن متغيرات الحالة
+            // ارجع النتائج للـ UI thread وآمن متغيرات الحالة — بس لو لسه إحنا
+            // أحدث طلب بناء (مفيش طلب تاني اتعمل بعدنا وإحنا لسه شغالين)
             post {
+                if (myGeneration != snapGridGeneration) return@post // اتلغينا، فيه طلب أحدث
                 snapGridCellSize = cellSize
                 snapGridMinX = minX
                 snapGridMinY = minY
@@ -594,7 +665,8 @@ class DXF2DView @JvmOverloads constructor(
 
     fun clear() {
         model = null
-        measureP1 = null; measureP2 = null
+        chainStartPoint = null
+        measureSegments.clear()
         snapPoints = emptyList()
         snapGrid = emptyMap()
         hiddenLayers.clear()
@@ -637,7 +709,7 @@ class DXF2DView @JvmOverloads constructor(
 
         val m = model ?: return
 
-        // ── رسم كل الخطوط + الأقواس (بعد تفليحها) بنداء Canvas واحد لكل لون — 
+        // ── رسم كل الخطوط + الأقواس (بعد تفليحها) بنداء Canvas واحد لكل لون —
         for ((color, modelCoords) in lineColorGroups) {
             val screenCoords = FloatArray(modelCoords.size)
             var i = 0
@@ -680,23 +752,30 @@ class DXF2DView @JvmOverloads constructor(
     }
 
     private fun drawMeasurement(canvas: Canvas) {
-        val p1 = measureP1
-        if (p1 != null) {
-            val sx1 = toScreenX(p1[0]); val sy1 = toScreenY(p1[1])
+        // ⚠️ تعديل جوهري (طلب Amr): بدل زوج نقط واحد، بنرسم كل الأضلاع المكمّلة
+        // في measureSegments (كل واحد بلابل الطول + زرار حذف)، بالإضافة للضلع
+        // المعلّق حاليًا (من chainStartPoint لحد آخر نقطة معاينة أثناء السحب).
+        val newHitPositions = ArrayList<FloatArray>(measureSegments.size)
+        for (seg in measureSegments) {
+            val sx1 = toScreenX(seg.p1[0]); val sy1 = toScreenY(seg.p1[1])
+            val sx2 = toScreenX(seg.p2[0]); val sy2 = toScreenY(seg.p2[1])
+            val deleteBtnPos = drawMeasureLine(canvas, sx1, sy1, sx2, sy2, seg.distMm, drawDeleteButton = true)
+            newHitPositions.add(deleteBtnPos)
+        }
+        deleteButtonScreenPositions = newHitPositions
+
+        val start = chainStartPoint
+        if (start != null) {
+            val sx1 = toScreenX(start[0]); val sy1 = toScreenY(start[1])
             canvas.drawCircle(sx1, sy1, pointRadiusPx, measurePointPaint)
 
-            val p2 = measureP2
-            if (p2 != null) {
-                // قياس مكتمل — خط نهائي بين النقطتين
-                val sx2 = toScreenX(p2[0]); val sy2 = toScreenY(p2[1])
-                canvas.drawCircle(sx2, sy2, pointRadiusPx, measurePointPaint)
-                drawMeasureLine(canvas, sx1, sy1, sx2, sy2, p1, p2)
-            } else if (isDragPlacing) {
+            if (isDragPlacing) {
                 // خط القياس بيتحرك Live مع الإصبع أثناء اللمس المستمر، قبل ما تتثبّت
                 // النقطة التانية فعليًا (يشمل قفل Ortho لو الزاوية قريبة من مستقيم)
                 dragLiveWorld?.let { live ->
                     val sxLive = toScreenX(live[0]); val syLive = toScreenY(live[1])
-                    drawMeasureLine(canvas, sx1, sy1, sxLive, syLive, p1, live)
+                    val distMm = hypot((live[0] - start[0]).toDouble(), (live[1] - start[1]).toDouble()).toFloat()
+                    drawMeasureLine(canvas, sx1, sy1, sxLive, syLive, distMm, drawDeleteButton = false)
                 }
             }
         }
@@ -709,20 +788,23 @@ class DXF2DView @JvmOverloads constructor(
     }
 
     /** رسم خط قياس (نهائي أو معاينة حية أثناء السحب) + تسمية الطول — دالة مشتركة
-     * عشان منكررش نفس منطق إبعاد النص عن الخط مرتين */
-    private fun drawMeasureLine(canvas: Canvas, sx1: Float, sy1: Float, sx2: Float, sy2: Float, w1: FloatArray, w2: FloatArray) {
+     * عشان منكررش نفس منطق إبعاد النص عن الخط مرتين. بترجع موقع زرار الحذف على
+     * الشاشة (حتى لو [drawDeleteButton]=false، عشان الاستدعاء يفضل موحّد) —
+     * الزرار نفسه ما بيترسمش غير لو drawDeleteButton=true (الأضلاع المكمّلة بس،
+     * مش معاينة السحب الحية اللي لسه مش قياس فعلي). */
+    private fun drawMeasureLine(
+        canvas: Canvas, sx1: Float, sy1: Float, sx2: Float, sy2: Float,
+        distMm: Float, drawDeleteButton: Boolean
+    ): FloatArray {
         canvas.drawLine(sx1, sy1, sx2, sy2, measureLinePaint)
 
-        // بنفترض إن وحدات الرسمة الخام هي مم (نفس افتراض عارض الـ STL بالظبط)،
-        // وبنحوّلها لعرض حسب الوحدة المختارة (مم/سم/بوصة) بدل رقم خام من غير وحدة
-        val distMm = hypot((w2[0] - w1[0]).toDouble(), (w2[1] - w1[1]).toDouble()).toFloat()
         val displayDist = distMm * currentUnit.factorFromMm
         val midX = (sx1 + sx2) / 2f
         val midY = (sy1 + sy2) / 2f
         val label = "%.2f %s".format(displayDist, resources.getString(currentUnit.labelRes))
 
         // ── إبعاد النص عن الخط نفسه عمودي على اتجاهه (مش إزاحة قطرية ثابتة) عشان
-        // يفضل واضح مهما كانت زاية الخط، بمسافة أكبر من قبل، بالإضافة لخلفية
+        // يفضل واضح مهما كانت زاوية الخط، بمسافة أكبر من قبل، بالإضافة لخلفية
         // خفيفة وراءه تضمن وضوحه حتى لو وقع فوق تفصيلة تانية في الرسمة ──
         val lineDx = sx2 - sx1; val lineDy = sy2 - sy1
         val lineLen = hypot(lineDx.toDouble(), lineDy.toDouble()).toFloat().let { if (it < 1f) 1f else it }
@@ -736,23 +818,39 @@ class DXF2DView @JvmOverloads constructor(
         val textWidth = measureTextPaint.measureText(label)
         val fm = measureTextPaint.fontMetrics
         val padH = 10f * density; val padV = 6f * density
-        canvas.drawRoundRect(
-            labelX - textWidth / 2f - padH, labelY + fm.ascent - padV,
-            labelX + textWidth / 2f + padH, labelY + fm.descent + padV,
-            8f * density, 8f * density, measureLabelBgPaint
-        )
+        val bgLeft = labelX - textWidth / 2f - padH
+        val bgTop = labelY + fm.ascent - padV
+        val bgRight = labelX + textWidth / 2f + padH
+        val bgBottom = labelY + fm.descent + padV
+        canvas.drawRoundRect(bgLeft, bgTop, bgRight, bgBottom, 8f * density, 8f * density, measureLabelBgPaint)
         canvas.drawText(label, labelX - textWidth / 2f, labelY, measureTextPaint)
+
+        // ── زرار الحذف: دايرة صغيرة حمراء عند الطرف اليمين لخلفية اللابل ──
+        val btnX = bgRight + deleteButtonRadiusPx + 6f * density
+        val btnY = (bgTop + bgBottom) / 2f
+        if (drawDeleteButton) {
+            canvas.drawCircle(btnX, btnY, deleteButtonRadiusPx, deleteButtonPaint)
+            val xSize = deleteButtonRadiusPx * 0.45f
+            canvas.drawLine(btnX - xSize, btnY - xSize, btnX + xSize, btnY + xSize, deleteButtonXPaint)
+            canvas.drawLine(btnX - xSize, btnY + xSize, btnX + xSize, btnY - xSize, deleteButtonXPaint)
+        }
+        return floatArrayOf(btnX, btnY)
     }
 
-    /** شاشة تكبير ثابتة أعلى يمين الشاشة (مش متبّعة الإصبع) — بترسم نسخة مكبّرة
-     * من نفس محتوى الرسمة حوالين نقطة الالتقاط الحالية، بخلفية بنفس لون خلفية
-     * العارض الفعلي (مش لون ثابت) عشان خطوط غامقة اللون تفضل واضحة لو المستخدم
-     * مغيّر الخلفية لفاتحة، مع علامة + في النص توضح بالظبط فين هتتحدد النقطة. */
+    /** شاشة تكبير ثابتة — بترسم نسخة مكبّرة من نفس محتوى الرسمة حوالين نقطة
+     * الالتقاط الحالية، بخلفية بنفس لون خلفية العارض الفعلي (مش لون ثابت) عشان
+     * خطوط غامقة اللون تفضل واضحة لو المستخدم مغيّر الخلفية لفاتحة، مع علامة +
+     * في النص توضح بالظبط فين هتتحدد النقطة.
+     *
+     * ⚠️ إصلاح (بلاغ Amr، مرفق صورة): كانت مكانها ثابت أعلى يمين الشاشة، وده
+     * كان بيتصادم مع كارت "إظهار الفجوات في الرسمة" العائم فوق العارض في نفس
+     * المنطقة تقريبًا — جزء من العدسة كان بيختفي وراه. نقلناها لأسفل يمين
+     * الشاشة، بعيد تمامًا عن أي كارت عائم بيظهر فوق العارض (كلهم فوق). */
     private fun drawMagnifier(canvas: Canvas, worldX: Float, worldY: Float) {
         val radius = 62f * density
         val margin = 16f * density
         val magCenterX = width - margin - radius
-        val magCenterY = margin + radius
+        val magCenterY = height - margin - radius
         val zoom = 3.5f
         val magScale = scale * zoom
 
