@@ -4,11 +4,13 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
@@ -92,8 +94,13 @@ class DXF2DView @JvmOverloads constructor(
      * ولا نقطة اتحطت أو آخر ضلع كمّل وبستنى نقطة جديدة تبدأ منها الضلع اللي بعده). */
     private var chainStartPoint: FloatArray? = null
 
-    private data class MeasureSegment(val p1: FloatArray, val p2: FloatArray, val distMm: Float)
+    private data class MeasureSegment(var p1: FloatArray, var p2: FloatArray, var distMm: Float)
     private val measureSegments = mutableListOf<MeasureSegment>()
+
+    /** سحب نقطة قياس اتحطت بالفعل عشان تتعدّل من غير ما تمسح القياس كله —
+     * Pair(segIndex, pointIndex) حيث pointIndex=0 يعني p1 و1 يعني p2 */
+    private var draggingPoint: Pair<Int, Int>? = null
+    private val pointTouchRadiusPx = 24f * density
 
     /** نصف قطر زرار الحذف باللمس — أكبر شوية من نصف قطر الرسم البصري نفسه
      * عشان يبقى سهل يتلمس بإصبع حتى لو مش دقيق 100% */
