@@ -421,6 +421,34 @@ class DXF2DView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun totalCutLength(): Float {
+        val m = model?: return 0f
+        var total = 0f
+        for (line in m.lines) {
+            if (!isLayerVisible(line.layer)) continue
+            val dx = line.x2 - line.x1; val dy = line.y2 - line.y1
+            total += hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        }
+        for (arc in m.arcs) {
+            if (!isLayerVisible(arc.layer)) continue
+            var span = arc.endDeg - arc.startDeg
+            if (span < 0) span += 360f
+            total += arc.r * Math.toRadians(span.toDouble()).toFloat()
+        }
+        for (circle in m.circles) {
+            if (!isLayerVisible(circle.layer)) continue
+            total += 2f * Math.PI.toFloat() * circle.r
+        }
+        return total
+    }
+
+    fun visibleCuttableEntityCount(): Int {
+        val m = model?: return 0
+        return m.lines.count { isLayerVisible(it.layer) } +
+            m.arcs.count { isLayerVisible(it.layer) } +
+            m.circles.count { isLayerVisible(it.layer) }
+    }
+
     private fun buildSnapPoints(m: DxfModel): List<FloatArray> {
         val pts = mutableListOf<FloatArray>()
         for (line in m.lines) {
@@ -666,7 +694,6 @@ class DXF2DView @JvmOverloads constructor(
         return floatArrayOf(btnX, btnY)
     }
 
-    // العدسة فوق شمال
     private fun drawMagnifier(canvas: Canvas, worldX: Float, worldY: Float) {
         val radius = 62f * density
         val margin = 16f * density
