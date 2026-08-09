@@ -39,7 +39,7 @@ class STLRenderer : GLSurfaceView.Renderer {
         uniform vec3 uLightDir;
         uniform int  uMaterial;
         uniform float uLightAngleDeg;
-        // بيتحكم في شفافية الرسمة كلها — 1.0 عادي، وبتتقلل لحد ~0.15 وقت رسم
+        // بيتحكم في شفافية الرسمة كلها — 1.0 عادي، وبتتقلل لحد \~0.15 وقت رسم
         // انعكاس الموديل (reflection) تحته، بدل ما نكرر كود الشيدر من الأول
         uniform float uOpacityMultiplier;
         // بيتحسب من نصف قطر الموديل الفعلي (1/modelRadius) بدل رقم ثابت (كان 0.015)
@@ -201,42 +201,15 @@ class STLRenderer : GLSurfaceView.Renderer {
     /**
      * بيطبّق تغيير زووم (Pinch) حوالين نقطة معيّنة على الشاشة (نقطة تلاقي
      * الأصابع)، بدل ما الزووم يتم دايمًا حوالين مركز الموديل الثابت (البند 3.1).
-     *
-     * ليه ده كان بج: الإسقاط Orthographic بتاعنا متماثل (Symmetric) حوالين
-     * منتصف الشاشة دايمًا — يعني تغيير scaleFactor لوحده (من غير أي لمس لـ
-     * panX/panY) بيقرّب/يبعّد كل حاجة نحو مركز الشاشة بالظبط، مش نحو مكان
-     * إصبعين المستخدم. النتيجة: أي تفصيلة المستخدم بيكبّرها بعيدة عن مركز
-     * الشاشة كانت "بتفلت" وتتحرك بعيد عن مكان لمسه فعليًا وقت الزووم — وده
-     * كان بيبان أوضح كل ما الزووم يزيد لأن أي إزاحة صغيرة عن المركز بتتكبّر
-     * بصريًا مع كل مرة يزوم فيها.
-     *
-     * الحل: نحسب رياضيًا مقدار تعديل panX/panY المطلوب عشان النقطة اللي تحت
-     * إصبعي المستخدم (نقطة التلاقي) تفضل ثابتة بصريًا في نفس مكانها بالظبط بعد
-     * تغيير الزووم — مش بس النقطة الجديدة، لازم كمان نعوّض أي Pan سابق موجود
-     * أصلاً (عشان كده المعادلة فيها panX*actualRatio مش panX ثابت).
-     *
-     * ملحوظة دقة: في حالة panX=panY=0 (يعني المستخدم لسه ما عملش Pan خالص)،
-     * المعادلة دي بترجع بالظبط نفس نتيجة الطريقة القديمة (زووم حوالين المركز).
-     * لكن لو فيه Pan موجود بالفعل، الطريقتين بيختلفوا عمدًا: القديمة كانت بتثبّت
-     * panX زي ما هو (وده بالظبط سبب الـ"فلتان" — بيرجّع الزووم لمركز الموديل
-     * الأصلي بدل مركز الشاشة الحالي)، والجديدة بتثبّت مركز الشاشة الحالي نفسه
-     * (أو نقطة اللمس لو مش في النص) — وده الصح.
-     *
-     * @param focalScreenX/Y إحداثيات نقطة تلاقي الإصبعين بالبيكسل (من MotionEvent مباشرة)
-     * @param spanRatio نسبة تغيّر المسافة بين الإصبعين (curSpan/previousSpan)
      */
     fun applyPinchZoom(focalScreenX: Float, focalScreenY: Float, spanRatio: Float) {
         if (surfaceWidth == 0 || surfaceHeight == 0) return
         val oldScale = scaleFactor
         val newScale = (oldScale * spanRatio).coerceIn(0.1f, 12f)
         if (newScale == oldScale) return
-        // النسبة الفعلية بعد الـ coerceIn ممكن تختلف شوية عن spanRatio الأصلي
-        // لو وصلنا لحد أقصى/أدنى الزووم — لازم نستخدمها هي بالظبط في المعادلة
         val actualRatio = newScale / oldScale
 
         val ratio = surfaceWidth.toFloat() / surfaceHeight.toFloat()
-        // تحويل نقطة اللمس من بكسلات الشاشة لإحداثيات NDC (-1..1) — إحداثي Y في
-        // اندرويد بينزل لتحت، وفي NDC بيطلع لفوق، فلازم نعكسه
         val ndcX = (focalScreenX / surfaceWidth) * 2f - 1f
         val ndcY = 1f - (focalScreenY / surfaceHeight) * 2f
 
@@ -250,23 +223,19 @@ class STLRenderer : GLSurfaceView.Renderer {
     var lightAngle = 45f
         set(value) {
             field = ((value % 360f) + 360f) % 360f
-        } // زاوية الإضاءة من 0 إلى 360
+        }
 
     private var modelCenter = floatArrayOf(0f, 0f, 0f)
     private var modelRadius = 1f
     /** لو مش null، بيستخدم بدل modelCenter كمركز دوران — بيتحدد من نقطة اللمس الأولى
-     * على سطح الموديل (raycast)، فيدّي إحساس تحكم أدق من الدوران حوالين مركز الصندوق
-     * المحيط اللي ممكن يكون بعيد عن شكل الموديل الفعلي في الأشكال الغير منتظمة */
+     * على سطح الموديل (raycast) */
     @Volatile var pivotOverride: FloatArray? = null
 
     // CopyOnWriteArrayList بدل ArrayList - thread-safe
     private val measurementPoints = CopyOnWriteArrayList<FloatArray>()
-    // وقت تثبيت كل نقطة (بالتوازي مع measurementPoints، بنفس الترتيب والطول دايمًا) —
-    // مستخدم في أنيميشن "تكبر وقت التثبيت وبعدين تصغر" (drawMeasurementOverlay)
     private val measurementPointTimes = CopyOnWriteArrayList<Long>()
     @Volatile private var previewPoint: FloatArray? = null
 
-    /** بتتحدث لحظياً أثناء سحب الإصبع بعد اختيار النقطة الأولى — عشان الخط والمسافة يتحركوا مع الإصبع */
     fun setPreviewMeasurementPoint(point: FloatArray?) {
         previewPoint = point
     }
@@ -278,9 +247,6 @@ class STLRenderer : GLSurfaceView.Renderer {
 
     fun setModelColor(r: Float, g: Float, b: Float) { modelColor = floatArrayOf(r, g, b, 1.0f) }
 
-    // نظام المواد
-    /** كل الخامات دلوقتي بنفس أسلوب الـ Clay المطفي (زي 3ds Max) — الفرق بينهم اللون بس،
-     * مفيش لمعان ولا نقوش procedural خالص. */
     enum class Material(val id: Int, val nameAr: String, val defaultColor: FloatArray) {
         CLAY_GRAY  (0, "كلاي رمادي",   floatArrayOf(0.62f, 0.62f, 0.64f)),
         CLAY_WHITE (1, "كلاي أبيض",    floatArrayOf(0.88f, 0.87f, 0.84f)),
@@ -293,36 +259,19 @@ class STLRenderer : GLSurfaceView.Renderer {
     }
 
     @Volatile var currentMaterial = Material.CLAY_GRAY
-    /** أغلب ملفاتك بتيجي من 3ds Max (Z-up) — فده الافتراضي الجديد. لو حد احتاج ملف
-     * من مصدر تاني بيستخدم Y-up أصلاً (زي Blender)، يقفلها من هنا */
     @Volatile var zUpMode = true
-    /** أدنى نقطة حقيقية في الموديل (من الـ vertices الفعلية، مش تقريب من نصف القطر) —
-     * بتتحسب في setModel() وبتتستخدم لمكان الظل/الـ Glow عشان يبقوا مظبوطين تحت
-     * الموديل بالظبط مهما كان شكله غير منتظم */
     @Volatile var modelBottomY = 0f
-    /** أقل/أقصى إحداثيات حقيقية للموديل (بعد تصحيح المحور) — مستخدمة في رسم صندوق
-     * الأبعاد (Bounding Box) */
     private var modelMinBounds = floatArrayOf(0f, 0f, 0f)
     private var modelMaxBounds = floatArrayOf(0f, 0f, 0f)
     @Volatile var showBoundingBox = false
-    /** هايلايت بسيط للحواف المفتوحة (نتيجة MeshIntegrityChecker) — الهدف مجرد
-     * إشارة بصرية "في أماكن مفتوحة هنا"، مش تقرير دقيق (عدد الحواف مش مهم). */
     @Volatile var showOpenEdgesHighlight = false
     @Volatile var openEdgeHighlightVertices: FloatArray? = null
-    /** true = ارسم انعكاس الموديل تحته (زي المرايا)، false = ارسم شبكة (Grid) بدله.
-     * قابل للتحكم من شاشة الإعدادات. */
-    @Volatile var showReflection = false // افتراضي مقفول (Grid تظهر بدله) — طلب Amr
+    @Volatile var showReflection = false
 
-    // ── أنيميشن الدخول: الموديل "بيوصل من بعيد" بعد كل تحميل ناجح (البند الجديد) ──
-    // بيشتغل بـ Perspective مؤقتًا (المشهد العادي دايمًا Orthographic زي ما كان) عشان
-    // إحساس "الاقتراب" يبان فعليًا (في Ortho البعد عن الكاميرا مبيغيّرش حجم الموديل
-    // المرئي خالص، فأي أنيميشن "جاي من بعيد" هيبقى بلا معنى بصريًا من غيرها)
     private var introActive = false
     private var introStartMs = 0L
     private val introDurationMs = 1100L
 
-    // ── حجم نقاط القياس: كبيرة وقت التثبيت (سهل تشوفها بدقة)، وبعدين تصغر لحجمها
-    // المستقر بسرعة عشان متبقاش مشتتة (اقتراح المستخدم) ──
     private val POINT_SIZE_LARGE = 34f
     private val POINT_SIZE_RESTING = 15f
     private val POINT_SHRINK_DURATION_MS = 320L
@@ -340,26 +289,9 @@ class STLRenderer : GLSurfaceView.Renderer {
     private var currentModel: STLModel? = null
     fun getModel(): STLModel? = currentModel
 
-    /** بتطبّق تبديل Y/Z لو zUpMode مفعّل، وترجع نفس الموديل من غير تغيير لو لأ.
-     * دالة بيانات خالصة (Pure) — آمنة تتنادى من أي Thread (مش لازم GL thread)، عشان
-     * أي جزء تاني في التطبيق (زي أدوات القياس في الـ Fragment) يقدر يزامن نسخته
-     * من بيانات الموديل مع نفس البيانات اللي فعليًا بترتسم على الشاشة. */
-    /** [sourceIsAlwaysYUp] = true لملفات زي GLB اللي بتفرض معيار Y-up إجباري في
-     * الصيغة نفسها (عكس STL/OBJ اللي مفيهمش معيار ثابت، فبنسيب تصحيح zUpMode
-     * يشتغل عليهم زي ما هو). تطبيق نفس دوران التصحيح على بيانات GLB (أصلاً صح)
-     * بيطلّع الموديل بزاوية غلط — مش انعكاس مرآة حرفي، بس دوران 90° خاطئ حوالين
-     * محور X بيخلي شكله "معكوس" بصريًا للمستخدم. */
     fun applyAxisConvention(model: STLModel, sourceIsAlwaysYUp: Boolean = false): STLModel =
         if (zUpMode && !sourceIsAlwaysYUp) swapYZ(model) else model
 
-    /** ملحوظة: بيفترض إن الموديل الممرّر هنا اتطبّق عليه applyAxisConvention() بالفعل
-     * من المستدعي — مش بيعمل التبديل تاني هنا عشان نتجنب تبديل مزدوج (اللي هيرجّع
-     * الاتجاه الغلط تاني!) لما setModel بتتنفذ على GL thread عن طريق queueEvent. */
-    /** بتحرر الموديل الحالي من الذاكرة (المصفوفات الضخمة + نقاط القياس) — لازم تتنادى
-     * قبل أي تحميل جديد (STL أو حتى قبل التبديل لعرض DXF)، مش بس عند تبديل الوضع، عشان
-     * الموديل السابق ميفضلش قاعد في الذاكرة "لحد ما الـ GC يقرر" وهو ده اللي كان بيخلي
-     * حتى تحميل ملف واحد كبير لوحده يقرب من حد الذاكرة بسرعة. بيشيل بيانات الـ VBOs من
-     * كارت الشاشة كمان (نفس المقابض بترجع لحجم صفر بدل ما تفضل شايلة آخر موديل اترفع). */
     fun clearModel() {
         currentModel = null
         pendingModel = null
@@ -383,7 +315,7 @@ class STLRenderer : GLSurfaceView.Renderer {
 
     fun setModel(model: STLModel) {
         currentModel = model
-        pendingModel = model   // يُرفع على GL thread في onDrawFrame أو onSurfaceCreated
+        pendingModel = model
 
         modelCenter = floatArrayOf(
             (model.minBounds[0] + model.maxBounds[0]) / 2f,
@@ -394,19 +326,10 @@ class STLRenderer : GLSurfaceView.Renderer {
         val dy = model.maxBounds[1] - model.minBounds[1]
         val dz = model.maxBounds[2] - model.minBounds[2]
         modelRadius = (maxOf(dx, dy, dz) / 2f).let { if (it <= 0f) 1f else it }
-        // أدنى نقطة Y حقيقية — دي هتستخدم لمكان الظل/الـ Glow بدل التقريب القديم
-        // (نصف القطر)، فهيبقوا مظبوطين تحت الموديل بالظبط
         modelBottomY = model.minBounds[1]
         modelMinBounds = model.minBounds.copyOf()
         modelMaxBounds = model.maxBounds.copyOf()
 
-        // زاوية افتراضية توازنية (Three-quarter view) تفضّل تُظهر السطح العلوي +
-        // الوجه الأمامي + جزء من الجانب مع بعض، بدل زاوية شبه جانبية كانت بتطلع
-        // "مفرودة" أفقيًا لموديلات طويلة/رفيعة (زي شكل قناة أو نصل).
-        // ⚠️ نفس زاوية زرار "Reset" بالظبط (resetCamera في ViewerFragment) — الفرق
-        // الوحيد إن الدخول بيبقى بزووم أقل شوية (0.85 بدل 1) عشان الموديل يـ"فيت"
-        // مع الشاشة بهامش مريح أول ما يتفتح، وبعدين أي Reset بعد كده بيرجّع
-        // للزووم الطبيعي (1) زي المتوقع من "إعادة ضبط".
         rotationX = 25f; rotationY = 35f; scaleFactor = 0.85f; panX = 0f; panY = 0f
         pivotOverride = null
         measurementPoints.clear()
@@ -415,27 +338,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         updateProjection()
     }
 
-    /** بتحوّل بيانات الموديل من نظام Z-up (زي 3ds Max) لنظام Y-up (اللي الرندر مبني
-     * عليه)، عن طريق دوران حقيقي 90° حول محور X: (x, y, z) -> (x, z, -y).
-     *
-     * ⚠️ السبب الأصلي لعيب الـ Mirror (البند 0): النسخة القديمة كانت بتعمل مجرد
-     * تبديل (swap) بسيط بين Y و Z من غير أي إشارة سالبة: (x, y, z) -> (x, z, y).
-     * رياضيًا، تبديل محورين من غير قلب إشارة أي واحد فيهم هو "انعكاس" (reflection,
-     * determinant = -1) مش دوران (rotation, determinant = +1) — يعني بيقلب
-     * "يدوية" (chirality) الموديل بالكامل، فيظهر الموديل مقلوب زي المراية حتى في
-     * أول رسمة له، والانعكاس تحت الموديل (drawReflection) كان بيورّث نفس العيب
-     * لأنه بيرسم نسخة من نفس بيانات الموديل المقلوبة أصلًا.
-     *
-     * الإصلاح: نستخدم دوران حقيقي حول محور X (x, y, z) -> (x, z, -y) بدل التبديل
-     * المباشر. ده بيحافظ على نفس تأثير "رفع" محور Z القديم ليبقى Y (الارتفاع)
-     * لكن من غير قلب اليدوية، فالموديل بيترسم صح من غير Mirror. ولأنه دوران حقيقي
-     * (مش انعكاس)، ترتيب رؤوس المثلثات (winding order) بيفضل صحيح زي ما هو من
-     * غير أي حاجة تانية محتاجة تتغيّر. */
-    /** ⚠️ بتعدّل مصفوفات الموديل في مكانها (in-place) بدل ما تستنسخ نسخة جديدة
-     * كاملة منها — عمدًا، عشان نلغي ذروة استهلاك ذاكرة مؤقتة كانت بتحصل هنا (وقت
-     * ما النسخة القديمة والجديدة يبقوا موجودين في الذاكرة مع بعض للحظة). كل رأس
-     * (x,y,z) بيتحول بشكل مستقل عن باقي الرؤوس فـ التبديل الآمن في مكانه من غير
-     * أي تأثير على قيم تانية (مفيش Aliasing بين الرؤوس المختلفة). */
     private fun swapYZ(model: STLModel): STLModel {
         val v = model.vertices
         var i = 0
@@ -460,35 +362,27 @@ class STLRenderer : GLSurfaceView.Renderer {
         return model.copy(minBounds = minB, maxBounds = maxB)
     }
 
-
-    /** Uploads model geometry to GPU VBOs using chunked approach to avoid OOM. Called on GL thread. */
     private fun uploadModelToGPU(model: STLModel) {
         val verts = model.vertices
         val norms = model.normals
         vertexCountToDraw = verts.size / 3
 
         try {
-            // رفع vertices مباشرة chunk بـ chunk لتجنب OOM
             val vb = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder())
             vb.asFloatBuffer().put(verts); vb.position(0)
             GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, vboIds[0])
             GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, verts.size * 4, vb, GLES20.GL_STATIC_DRAW)
-            // ⚠️ ملحوظة: هنا كان فيه استدعاء System.gc() يدوي اتشال. System.gc() مش
-            // بيضمن تحرير فوري للذاكرة (مجرد "اقتراح" للـ GC)، لكنه بيوقف التطبيق فعليًا
-            // للحظات محاول ينفذ — وده بالظبط سبب إحساس "الهنج" أثناء تحميل موديل كبير،
-            // مش حل له. حذفه وحده بيشيل مصدر تهنيج حقيقي.
 
             val nb = ByteBuffer.allocateDirect(norms.size * 4).order(ByteOrder.nativeOrder())
             nb.asFloatBuffer().put(norms); nb.position(0)
             GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, vboIds[1])
             GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, norms.size * 4, nb, GLES20.GL_STATIC_DRAW)
 
-            // Wireframe: LOD مع حد أقصى 50K مثلث للـ wireframe
             val triCount = vertexCountToDraw / 3
             val qualityMultiplier = when (qualityLevel) {
-                0 -> 4    // منخفضة — أقل تفاصيل، أداء أسرع
-                1 -> 2    // متوسطة
-                else -> 1 // عالية — كل التفاصيل
+                0 -> 4
+                1 -> 2
+                else -> 1
             }
             val wireStep = when {
                 triCount > 1_000_000 -> 20
@@ -528,7 +422,6 @@ class STLRenderer : GLSurfaceView.Renderer {
             vboReady = true
 
         } catch (e: OutOfMemoryError) {
-            // fallback: رسم بدون wireframe بـ CPU buffers مصغرة
             android.util.Log.e("STLRenderer", "OOM in uploadModelToGPU, using CPU fallback")
             val maxVerts = minOf(verts.size, 3_000_000)
             vertexBuffer = ByteBuffer.allocateDirect(maxVerts * 4).order(ByteOrder.nativeOrder())
@@ -545,7 +438,7 @@ class STLRenderer : GLSurfaceView.Renderer {
         measurementPoints.add(point)
         measurementPointTimes.add(android.os.SystemClock.uptimeMillis())
         if (measurementPoints.size > 2) { measurementPoints.removeAt(0); measurementPointTimes.removeAt(0) }
-        previewPoint = null // النقطة اتثبتت فعلياً، مبقاش محتاجين المعاينة الحية
+        previewPoint = null
     }
 
     fun clearMeasurementPoints() {
@@ -559,9 +452,7 @@ class STLRenderer : GLSurfaceView.Renderer {
         meshProgram = createProgram(vertexShaderCode, fragmentShaderCode)
         lineProgram = createProgram(lineVertexShaderCode, lineFragmentShaderCode)
         shadowProgram = createProgram(shadowVertexShaderCode, shadowFragmentShaderCode)
-        // Generate VBO handles
         GLES20.glGenBuffers(3, vboIds, 0)
-        // Upload any model that was loaded before GL context was ready
         pendingModel?.let { uploadModelToGPU(it); pendingModel = null }
     }
 
@@ -587,9 +478,6 @@ class STLRenderer : GLSurfaceView.Renderer {
             -orthoHalf, orthoHalf, near, far)
     }
 
-    /** إسقاط Perspective حقيقي — بيتستخدم بس أثناء أنيميشن دخول الموديل (البند الجديد)،
-     * عشان إحساس "الاقتراب من بعيد" يبان بصريًا (المشهد العادي بيفضل Orthographic
-     * زي ما كان دايمًا بعد ما الأنيميشن تخلص). */
     private fun updatePerspectiveProjection(safeRadius: Float) {
         if (surfaceWidth == 0 || surfaceHeight == 0) return
         val ratio = surfaceWidth.toFloat() / surfaceHeight.toFloat()
@@ -602,22 +490,17 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         updateClearColor()
 
-        // أولاً: ارفع أي موديل معلّق — قبل أي فحص أو return
         pendingModel?.let { uploadModelToGPU(it); pendingModel = null }
 
         if ((!vboReady && vertexBuffer == null) || vertexCountToDraw == 0) return
 
         if (autoRotate) rotationY = (rotationY + 0.6f) % 360f
 
-        // "تنفس" خفيف جدًا للموديل وهو واقف من غير ما حد يلمسه — بيوقف فورًا لو
-        // المستخدم بدأ يسحب عشان مايتعارضش مع التحكم اليدوي
         val floatOffset = if (!isUserInteracting && !suppressIdleFloat) {
             floatPhase += 0.025f
             kotlin.math.sin(floatPhase) * (if (modelRadius > 0f) modelRadius else 1f) * 0.012f
         } else 0f
 
-        // لو المستخدم بدأ يتفاعل (سحب/زووم) أثناء أنيميشن الدخول، نوقفها فورًا ونديله
-        // التحكم العادي على طول من غير ما تتعارك معاه
         if (introActive && isUserInteracting) introActive = false
 
         val safeRadius = if (modelRadius > 0f) modelRadius else 1f
@@ -627,12 +510,9 @@ class STLRenderer : GLSurfaceView.Renderer {
         if (introActive) {
             val elapsed = android.os.SystemClock.uptimeMillis() - introStartMs
             val raw = (elapsed.toFloat() / introDurationMs).coerceIn(0f, 1f)
-            // Ease-out تكعيبي: يبدأ سريع وبعدين "يستقر" بنعومة قرب النهاية
             val t = 1f - (1f - raw) * (1f - raw) * (1f - raw)
             updatePerspectiveProjection(safeRadius)
-            // من مسافة بعيدة جدًا (60x نصف القطر تقريبًا) لحد المسافة العادية (5x)
             camDistance = safeRadius * (5f + (1f - t) * 55f)
-            // تلاشي دخول خفيف (الموديل بيتجسّد تدريجيًا مع اقترابه، مش يظهر فجأة بالكامل)
             introFadeAlpha = (raw * 1.4f).coerceIn(0f, 1f)
             if (raw >= 1f) introActive = false
         } else {
@@ -662,7 +542,7 @@ class STLRenderer : GLSurfaceView.Renderer {
         drawMesh()
         currentOpacityMultiplier = 1f
 
-        val pts = measurementPoints.toList() // snapshot آمن
+        val pts = measurementPoints.toList()
         val hasPreview = pts.size == 1 && previewPoint != null
         if (pts.isNotEmpty() || hasPreview) drawMeasurementOverlay(pts, hasPreview)
         if (showPivotIndicator) drawPivotIndicator()
@@ -706,11 +586,8 @@ class STLRenderer : GLSurfaceView.Renderer {
         if (vboReady) GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
     }
 
-    /** بيرسم نسخة معكوسة شفافة جدًا من الموديل تحته — انعكاس حقيقي بنفس بيانات
-     * الموديل وبرنامج التظليل، بمصفوفة MVP معكوسة حول أرضية الموديل الحقيقية
-     * (نفس ارتفاع الظل) ودرجة شفافية منخفضة جدًا. */
     private fun drawReflection() {
-        if (wireframeMode) return // الانعكاس السلكي مش هيبان حلو، بنكتفي بالنسخة المصمتة بس
+        if (wireframeMode) return
         val refY = (pivotOverride ?: modelCenter)[1]
         val floorY = modelBottomY - refY
 
@@ -732,8 +609,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         Matrix.invertM(reflectedNormal, 0, reflectedModel, 0)
         Matrix.transposeM(reflectedNormal, 0, reflectedNormal, 0)
 
-        // نبدّل محتوى المصفوفات المشتركة مؤقتًا (drawSolidMesh بتقرا منها مباشرة)،
-        // نرسم الانعكاس، وبعدين نرجّعها زي ما كانت عشان رسمة الموديل الأساسية تكمل صح
         val savedMvp = mvpMatrix.copyOf()
         val savedModel = modelMatrix.copyOf()
         val savedNormal = normalMatrix.copyOf()
@@ -755,25 +630,11 @@ class STLRenderer : GLSurfaceView.Renderer {
         System.arraycopy(savedNormal, 0, normalMatrix, 0, 16)
     }
 
-    /** شبكة مربعات على مستوى الأرضية — بتترسم بدل الانعكاس لما يكون مقفول من
-     * الإعدادات. بتدي إحساس بمقياس المساحة اللي الموديل واقف عليها، من غير ما
-     * تشتت الانتباه عن الموديل نفسه (خطوط رفيعة باهتة).
-     *
-     * ⚠️ لازم الشبكة تتمركز فعليًا حوالين مركز الموديل الأفقي (X/Z الداخليين —
-     * يعني X/Y الأصليين من ملف التصميم قبل تصحيح المحور)، مش حوالين نقطة الصفر
-     * المحلية للملف (اللي ممكن تكون بعيدة تمامًا عن مركز الموديل الحقيقي لو
-     * الملف اتصمم بعيد عن نقطة الأصل). وعلى المحور الرأسي، لازم تثبت بالظبط عند
-     * أدنى نقطة حقيقية في الموديل، تحته على طول من غير أي إزاحة إضافية. */
     private fun drawFloorGrid() {
         val r = if (modelRadius > 0f) modelRadius else 1f
-        // نفس الـ pivot المستخدم في مصفوفة الموديل (draw()) — استخدامه هنا بالظبط
-        // (مش نقطة الصفر) هو اللي بيضمن إن الشبكة تتوسط مع الموديل صح بعد التحويل،
-        // لأن الاتنين بيتطرح منهم نفس الـ pivot في مصفوفة التحويل المشتركة
         val pivot = pivotOverride ?: modelCenter
         val centerX = pivot[0]
         val centerZ = pivot[2]
-        // أدنى نقطة حقيقية في الموديل (نفس نظام إحداثيات الرؤوس الخام، قبل أي
-        // طرح لل pivot — الطرح بيحصل تلقائيًا في مصفوفة الموديل المشتركة)
         val floorY = modelBottomY
         val ext = r * 1.7f
         val divisions = 12
@@ -782,10 +643,8 @@ class STLRenderer : GLSurfaceView.Renderer {
         val lines = ArrayList<Float>((divisions + 1) * 12)
         for (i in 0..divisions) {
             val pos = -ext + i * step
-            // خط موازي لمحور X (متمركز حوالين centerX/centerZ الحقيقيين)
             lines.add(centerX - ext); lines.add(floorY); lines.add(centerZ + pos)
             lines.add(centerX + ext); lines.add(floorY); lines.add(centerZ + pos)
-            // خط موازي لمحور Z
             lines.add(centerX + pos); lines.add(floorY); lines.add(centerZ - ext)
             lines.add(centerX + pos); lines.add(floorY); lines.add(centerZ + ext)
         }
@@ -799,8 +658,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         val mvpHandle = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
         val colorHandle = GLES20.glGetUniformLocation(lineProgram, "uColor")
         GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
-        // خطوط أوضح شوية من الأول (كانت alpha 0.35) — بعد ما قلّلنا شفافية الظل،
-        // الشبكة بقت أوضح تلقائيًا، وزودنا وضوحها شوية كمان عشان تبان بثقة أكتر
         GLES20.glUniform4f(colorHandle, 0.62f, 0.64f, 0.68f, 0.5f)
         GLES20.glLineWidth(1.2f)
 
@@ -846,12 +703,9 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glUniformMatrix4fv(normalMatrixHandle, 1, false, normalMatrix, 0)
         GLES20.glUniform4fv(colorHandle, 1, modelColor, 0)
         GLES20.glUniform1i(materialHandle, currentMaterial.id)
-        // تطبيع مقياس النقش الإجرائي على نصف قطر الموديل الفعلي (كان رقم ثابت 0.015
-        // بيفترض حجم موديل معيّن) — كده الخشب/الرخام بيبانوا صح لأي حجم موديل
         GLES20.glUniform1f(patternScaleHandle, 1f / (if (modelRadius > 0f) modelRadius else 1f))
         GLES20.glUniform1f(opacityHandle, currentOpacityMultiplier)
 
-        // حساب اتجاه الإضاءة من الزاوية
         val angleRad = Math.toRadians(lightAngle.toDouble()).toFloat()
         val lx = kotlin.math.cos(angleRad) * 0.7f
         val ly = 0.7f
@@ -885,15 +739,12 @@ class STLRenderer : GLSurfaceView.Renderer {
         val now = android.os.SystemClock.uptimeMillis()
         overlayPts.forEachIndexed { i, p ->
             flat[i * 3] = p[0]; flat[i * 3 + 1] = p[1]; flat[i * 3 + 2] = p[2]
-            // ── حجم النقطة: كبيرة (سهل تشوفها/تحددها بدقة) وقت التثبيت أو وهي لسه
-            // معاينة حية بتتحرك مع الإصبع، وبعدين تصغر تدريجيًا لحجمها المستقر خلال
-            // جزء من الثانية عشان متبقاش مشتتة عن الموديل نفسه ──
             sizes[i] = if (i < measurementPointTimes.size) {
                 val elapsed = now - measurementPointTimes[i]
                 val t = (elapsed.toFloat() / POINT_SHRINK_DURATION_MS).coerceIn(0f, 1f)
                 POINT_SIZE_RESTING + (POINT_SIZE_LARGE - POINT_SIZE_RESTING) * (1f - t)
             } else {
-                POINT_SIZE_LARGE // النقطة الحية (المعاينة) — لسه بتتحدد، تفضل كبيرة طول ما بتتحرك
+                POINT_SIZE_LARGE
             }
         }
         val fb = ByteBuffer.allocateDirect(flat.size * 4).order(ByteOrder.nativeOrder())
@@ -917,16 +768,8 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
     }
 
-    /** ظل بيضاوي شفاف تحت الموديل — بيدّي إحساس عمق/ثقل إن الموديل واقف على أرضية
-     * مش طاير في الفضاء. بيترسم في نفس فضاء الموديل (بعد الترجمة للمركز) فبيلف
-     * مع الموديل زي أي عنصر تاني بيستخدم mvpMatrix، وده متوافق مع إن مفيش أرضية
-     * ثابتة في المشهد لسه (هتيجي مع ميزة Grid Floor لاحقًا). */
     private fun drawGroundShadow() {
         val r = if (modelRadius > 0f) modelRadius else 1f
-        // نفس إصلاح محاذاة الـ Grid بالظبط: بنستخدم نفس الـ pivot المستخدم في
-        // مصفوفة الموديل (مش نقطة الصفر المحلية) عشان الظل يتمركز أفقيًا صح مع
-        // الموديل، وأدنى نقطة Y حقيقية من غير أي طرح إضافي (الطرح بيحصل تلقائيًا
-        // في مصفوفة الموديل المشتركة) عشان يفضل ملتصق تحت الموديل بالظبط
         val pivot = pivotOverride ?: modelCenter
         val centerX = pivot[0]
         val centerZ = pivot[2]
@@ -957,8 +800,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         val alphaHandle = GLES20.glGetUniformLocation(shadowProgram, "uGlowAlpha")
         GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
         GLES20.glUniform3f(colorHandle, 0f, 0f, 0f)
-        // شفافية أقل كمان من قبل (كانت 0.24) عشان الظل يفضل يوضّح إن الموديل "واقف"
-        // على الأرضية من غير ما يأثر على وضوح خطوط الـ Grid تحته خالص
         GLES20.glUniform1f(alphaHandle, 0.16f)
 
         val vb = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder())
@@ -978,24 +819,17 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
     }
 
-    /** بيرسم صندوق سلكي شفاف حوالين أقصى حدود الموديل الحقيقية (Bounding Box) — مفيد
-     * لمعرفة أقصى أبعاد هتحتاجها فعليًا للتصنيع (CNC). بيتفعّل/يتقفل بزرار toggle. */
     private fun drawBoundingBox() {
-        // نستخدم إحداثيات الموديل الخام مباشرة زي ما هي — نفس اللي بيتحول بيها الموديل
-        // نفسه في drawMesh عن طريق mvpMatrix. لو نطرح الـ pivot هنا كمان هيتطرح
-        // مرتين (مرة هنا، ومرة جوه modelMatrix) والصندوق هيتزحزح بعيد عن الموديل.
         val minX = modelMinBounds[0]; val maxX = modelMaxBounds[0]
         val minY = modelMinBounds[1]; val maxY = modelMaxBounds[1]
         val minZ = modelMinBounds[2]; val maxZ = modelMaxBounds[2]
 
-        // 8 أركان الصندوق
         val c = arrayOf(
             floatArrayOf(minX, minY, minZ), floatArrayOf(maxX, minY, minZ),
             floatArrayOf(maxX, maxY, minZ), floatArrayOf(minX, maxY, minZ),
             floatArrayOf(minX, minY, maxZ), floatArrayOf(maxX, minY, maxZ),
             floatArrayOf(maxX, maxY, maxZ), floatArrayOf(minX, maxY, maxZ)
         )
-        // 12 ضلع (كل ضلع = نقطتين) — 4 تحت، 4 فوق، 4 عمودي واصلة بينهم
         val edges = intArrayOf(
             0,1, 1,2, 2,3, 3,0,
             4,5, 5,6, 6,7, 7,4,
@@ -1029,8 +863,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
     }
 
-    /** هايلايت بسيط للحواف المفتوحة — خطوط حمراء واضحة فوق الموديل، نفس تقنية
-     * drawBoundingBox بالظبط. الهدف بصري بحت ("في حاجة مفتوحة هنا")، مش تقرير دقيق. */
     private fun drawOpenEdgesHighlight() {
         val verts = openEdgeHighlightVertices
         if (verts == null || verts.isEmpty()) return
@@ -1043,8 +875,8 @@ class STLRenderer : GLSurfaceView.Renderer {
         val colorHandle = GLES20.glGetUniformLocation(lineProgram, "uColor")
 
         GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
-        GLES20.glUniform4f(colorHandle, 1f, 0.15f, 0.15f, 0.95f) // أحمر واضح
-        GLES20.glLineWidth(4f) // أعرض من صندوق الأبعاد عشان يبان بوضوح فوق سطح الموديل
+        GLES20.glUniform4f(colorHandle, 1f, 0.15f, 0.15f, 0.95f)
+        GLES20.glLineWidth(4f)
 
         val vb = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder())
             .asFloatBuffer().apply { put(verts); position(0) }
@@ -1057,9 +889,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
     }
 
-    /** بيرسم علامة صغيرة (خط متقاطع + نقطة) عند مركز الدوران الفعلي للموديل — بيتحرك
-     * ويتلف مع الموديل نفسه لأنه بيتحسب بنفس الـ mvpMatrix، فالمستخدم يشوف بعينه
-     * حوالين أنهي نقطة هو بيلف الموديل وقت السحب بإصبع واحد. */
     private fun drawPivotIndicator() {
         GLES20.glUseProgram(lineProgram)
         GLES20.glDisable(GLES20.GL_DEPTH_TEST)
@@ -1071,9 +900,6 @@ class STLRenderer : GLSurfaceView.Renderer {
         GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
         GLES20.glEnableVertexAttribArray(positionHandle)
 
-        // بنرسم العلامة عند إحداثيات الـ pivot الفعلية (مش عند الصفر المحلي) —
-        // عشان بعد ما تتحول بنفس mvpMatrix (اللي بيطرح نفس الـ pivot) تظبط بالظبط
-        // عند نقطة الدوران الحقيقية على سطح الموديل، مش نقطة عشوائية بعيدة عنه.
         val pivot = pivotOverride ?: modelCenter
         val len = (if (modelRadius > 0f) modelRadius else 1f) * 0.12f
         val lines = floatArrayOf(
@@ -1129,5 +955,54 @@ class STLRenderer : GLSurfaceView.Renderer {
                 throw RuntimeException("Shader compile failed: $log")
             }
         }
+    }
+
+    // ============================================================
+    // ===== دوال الإسقاط والعكس (مطلوبة لنظام القياس في GLViewerView)
+    // ============================================================
+
+    /**
+     * يحول نقطة من إحداثيات الشاشة إلى نقطة ثلاثية الأبعاد على سطح الموديل.
+     * بيستخدم RayPicker + Möller–Trumbore.
+     * بيرجع null لو اللمس وقع في فراغ (مفيش تقاطع مع أي مثلث).
+     */
+    fun unprojectRay(screenX: Float, screenY: Float): FloatArray? {
+        if (surfaceWidth == 0 || surfaceHeight == 0) return null
+        val model = currentModel ?: return null
+
+        val ray = RayPicker.screenPointToRay(
+            screenX, screenY,
+            surfaceWidth, surfaceHeight,
+            modelMatrix, viewMatrix, projectionMatrix
+        )
+        return RayPicker.findClosestIntersection(ray, model)
+    }
+
+    /**
+     * يسقط نقطة ثلاثية الأبعاد (World) على الشاشة ويكتب النتيجة في out[0]=x, out[1]=y
+     * بيستخدم mvpMatrix الحالية.
+     */
+    fun projectToScreenInto(worldPoint: FloatArray, out: FloatArray) {
+        if (surfaceWidth == 0 || surfaceHeight == 0) {
+            out[0] = 0f
+            out[1] = 0f
+            return
+        }
+
+        val temp = FloatArray(4)
+        Matrix.multiplyMV(temp, 0, mvpMatrix, 0,
+            floatArrayOf(worldPoint[0], worldPoint[1], worldPoint[2], 1f), 0)
+
+        if (temp[3] == 0f) {
+            out[0] = 0f
+            out[1] = 0f
+            return
+        }
+
+        val ndcX = temp[0] / temp[3]
+        val ndcY = temp[1] / temp[3]
+
+        out[0] = (ndcX + 1f) * 0.5f * surfaceWidth
+        out[1] = (1f - ndcY) * 0.5f * surfaceHeight
     }
 }
