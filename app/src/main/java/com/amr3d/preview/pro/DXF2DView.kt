@@ -44,11 +44,12 @@ class DXF2DView @JvmOverloads constructor(
         set(value) {
             field = value
             if (!value) {
-                tempP1 = null
-                isDragPlacing = false
-                dragLiveWorld = null
-                draggingPoint = null
+                clearMeasurement() // 1. امسح كله اول ما نطلع
             }
+            tempP1 = null
+            isDragPlacing = false
+            dragLiveWorld = null
+            draggingPoint = null
             invalidate()
         }
     var onDistanceMeasured: ((Float) -> Unit)? = null
@@ -143,9 +144,10 @@ class DXF2DView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.pointerCount > 1) {
             if (isDragPlacing) { isDragPlacing = false; dragLiveWorld = null; animatePointRadius(false) }
-            if (draggingPoint!= null) { draggingPoint = null; dragLiveWorld = null }
+            if (draggingPoint!= null) { draggingPoint = null; dragLiveWorld = null; animatePointRadius(false) } // 2. صغر الدبوس
             scaleDetector.onTouchEvent(event); gestureDetector.onTouchEvent(event); invalidate(); return true
         }
+
         if (measureModeOn) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -167,14 +169,19 @@ class DXF2DView @JvmOverloads constructor(
                     if (isDragPlacing) updateDragPreview(event.x, event.y)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (draggingPoint!= null) { draggingPoint = null; dragLiveWorld = null; animatePointRadius(false); invalidate(); return true }
+                    if (draggingPoint!= null) {
+                        draggingPoint = null; dragLiveWorld = null; animatePointRadius(false) // 2. صغر الدبوس
+                        invalidate(); return true
+                    }
                     if (isDragPlacing) {
                         if (event.actionMasked == MotionEvent.ACTION_UP) { updateDragPreview(event.x, event.y); dragLiveWorld?.let { commitMeasurePoint(it) } }
-                        isDragPlacing = false; dragLiveWorld = null; animatePointRadius(false); invalidate()
+                        isDragPlacing = false; dragLiveWorld = null; animatePointRadius(false) // 2. صغر الدبوس
+                        invalidate()
                     }
                 }
             }
         }
+
         scaleDetector.onTouchEvent(event); gestureDetector.onTouchEvent(event); return true
     }
 
